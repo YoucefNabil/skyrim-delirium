@@ -10,6 +10,8 @@
 
 #include "world.h"
 
+#include <RE/H/hkpCapsuleShape.h>
+
 namespace delirium::world
 {
 	namespace
@@ -73,6 +75,62 @@ namespace delirium::world
 			s.mean /= static_cast<float>(s.at.size());
 		}
 		return s;
+	}
+
+	std::vector<Capsule> Capsules(RE::Actor* a_actor)
+	{
+		std::vector<Capsule> out;
+		ForGraphs(a_actor, [&](RE::BShkbAnimationGraph& g) {
+			for (auto* b : g.characterInstance.ragdollDriver->ragdoll->rigidBodies) {
+				const auto* shape = b && b->world ? b->collidable.shape : nullptr;
+				if (!shape) {
+					continue;
+				}
+				float la[3]{}, lb[3]{}, r = 0.0f;
+				if (shape->type == RE::hkpShapeType::kCapsule) {
+					const auto* cs = static_cast<const RE::hkpCapsuleShape*>(shape);
+					std::memcpy(la, &cs->vertexA, sizeof(la));
+					std::memcpy(lb, &cs->vertexB, sizeof(lb));
+					r = cs->radius;
+				} else {
+					RE::hkAabb      box;
+					RE::hkTransform id{};
+					id.rotation.col0.quad.m128_f32[0] = 1.0f;
+					id.rotation.col1.quad.m128_f32[1] = 1.0f;
+					id.rotation.col2.quad.m128_f32[2] = 1.0f;
+					shape->GetAabbImpl(id, 0.0f, box);
+					const auto& lo = box.min.quad.m128_f32;
+					const auto& hi = box.max.quad.m128_f32;
+					float       h[3]{}, m[3]{};
+					int         ax = 0;
+					for (int i = 0; i < 3; ++i) {
+						h[i] = (hi[i] - lo[i]) * 0.5f;
+						m[i] = (hi[i] + lo[i]) * 0.5f;
+						ax = h[i] > h[ax] ? i : ax;
+					}
+					r = std::min(h[(ax + 1) % 3], h[(ax + 2) % 3]);
+					std::memcpy(la, m, sizeof(la));
+					std::memcpy(lb, m, sizeof(lb));
+					la[ax] -= std::max(0.0f, h[ax] - r);
+					lb[ax] += std::max(0.0f, h[ax] - r);
+				}
+				if (!(r > 0.0f) || r > 1.0f) {
+					continue;
+				}
+				const auto& xf = b->motion.motionState.transform;
+				const auto& c0 = xf.rotation.col0.quad.m128_f32;
+				const auto& c1 = xf.rotation.col1.quad.m128_f32;
+				const auto& c2 = xf.rotation.col2.quad.m128_f32;
+				const auto& t = xf.translation.quad.m128_f32;
+				auto        out3 = [&](const float* l) {
+					return RE::NiPoint3(c0[0] * l[0] + c1[0] * l[1] + c2[0] * l[2] + t[0], c0[1] * l[0] + c1[1] * l[1] + c2[1] * l[2] + t[1],
+						c0[2] * l[0] + c1[2] * l[1] + c2[2] * l[2] + t[2]);
+				};
+				const auto& v = b->motion.linearVelocity.quad.m128_f32;
+				out.push_back({ out3(la), out3(lb), r, RE::NiPoint3(v[0], v[1], v[2]) });
+			}
+		});
+		return out;
 	}
 
 	bool Add(RE::Actor* a_actor, bool a_log)

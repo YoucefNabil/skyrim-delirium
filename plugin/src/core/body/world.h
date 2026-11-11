@@ -13,6 +13,15 @@ namespace delirium::world
 	};
 	[[nodiscard]] Sample Bodies(RE::Actor* a_actor);
 
+	// one of those bodies as a capsule (its own shape if it is one, else its bounds down their longest side), Havok metres
+	struct Capsule
+	{
+		RE::NiPoint3 a, b;  // the ends of its axis
+		float        radius{};
+		RE::NiPoint3 vel;  // m/s
+	};
+	[[nodiscard]] std::vector<Capsule> Capsules(RE::Actor* a_actor);
+
 	// main thread: her ragdoll bodies into her cell's Havok world while she stands (Skyrim keeps them on her
 	// animation, keyframed); false: nothing added
 	bool Add(RE::Actor* a_actor, bool a_log = false);

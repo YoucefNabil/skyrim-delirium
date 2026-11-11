@@ -43,7 +43,8 @@ namespace delirium
 	X(nm_msg_set_bool) X(nm_msg_set_int) X(nm_msg_set_float) X(nm_msg_set_string) X(nm_msg_set_vec3) X(nm_msg_send) X(nm_agent_is_balancing) X(nm_agent_has_fallen) X(nm_agent_set_zero_pose) \
 	X(nm_build_scale) X(nm_build_destroy) X(nm_world_add_mesh) X(nm_world_raycast) X(nm_world_triangle_count) X(nm_agent_get_com) X(nm_agent_task_shot) X(nm_agent_task_balance) X(nm_agent_task_flinch) \
 	X(nm_agent_get_part_drives) X(nm_build_part_info) X(nm_agent_get_joint_accels) X(nm_agent_get_part_ext_torques) X(nm_agent_get_joint) \
-	X(nm_init_character_file) X(nm_build_from_character) X(nm_set_task_param) X(nm_build_remap) X(nm_build_part_frame) X(nm_build_part_joint) X(nm_build_turn_limit)
+	X(nm_init_character_file) X(nm_build_from_character) X(nm_set_task_param) X(nm_build_remap) X(nm_build_part_frame) X(nm_build_part_joint) X(nm_build_turn_limit) \
+	X(nm_agent_set_others) X(nm_agent_get_capsules)
 	struct Api
 	{
 #define DL_DECL(f) decltype(&::f) f = nullptr;

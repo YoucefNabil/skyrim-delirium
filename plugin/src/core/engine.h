@@ -199,6 +199,7 @@ namespace delirium
 			float                              dieAmp{ -1.0f }, diePeriod{ -1.0f };  // her death writhe's size and s per cycle (-1: random)
 			float                              speedCap{ -1.0f }; // m/s: the next drive caps every Skyrim body at this (her death's spikes), once
 			float                              ragdollAge{};  // age when Skyrim's ragdoll took her (ragdolled)
+			int                                others{};      // other NPCs' bodies in her physics as capsules right now (Others)
 			bool                               following{};   // torque drive: Delirium in FOLLOW mode on Skyrim's ragdoll
 			bool                               haveDrv{};
 			std::array<float, 21 * 6>          drv{};         // Delirium's force and torque per part from its last step (world)
@@ -481,6 +482,9 @@ namespace delirium
 		std::unordered_map<RE::FormID, std::chrono::steady_clock::time_point> struckAt_, lookedAt_;  // her last blow from a body; her bodies last looked at
 		std::atomic<bool> leaving_{ false };   // world::Leave is on its way (bCollide switched off)
 		bool Upright(RE::Actor* a_actor);      // Delirium has her on her feet
+		// the other NPCs' bodies near her, as Skyrim's world has them, into her Delirium physics (nm_agent_set_others):
+		// on her feet she is stopped by them there. None while she is down (Havok has her) or with [Bodies] off.
+		void Others(RE::Actor* a_actor, bool a_upright);
 		void Strikes(RE::Actor* a_body, bool a_down);  // whom of the standing NPCs her moving body strikes this frame
 		std::mutex    bumpLock_;               // bumpAt_: bumps come on any thread
 		std::unordered_map<RE::FormID, std::chrono::steady_clock::time_point> bumpAt_;  // her last bump (any, pushed or not)
