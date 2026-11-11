@@ -123,6 +123,17 @@ namespace delirium
 					a->SetAngle({ 0.0f, 0.0f, h + 3.14159265f });
 					logger::info("reset: {:08X} at ({:.0f} {:.0f} {:.0f}), ragdoll {}", a->GetFormID(), pos.x, pos.y, pos.z, a->IsInRagdollState());
 				}
+			} else if (w[0] == "drop" && w.size() >= 2) {
+				// the NPC in the air 150 units in front of the player, so many m up (6): a fall off a ledge ([Falls])
+				if (auto* a = actor(1)) {
+					auto*       player = RE::PlayerCharacter::GetSingleton();
+					const float h = player->GetAngleZ();
+					const float up = w.size() >= 3 ? std::stof(std::string(w[2])) : 6.0f;
+					auto        pos = player->GetPosition() + RE::NiPoint3(std::sin(h), std::cos(h), 0.0f) * 150.0f;
+					pos.z += up / kUnit;
+					a->SetPosition(pos, true);
+					logger::info("drop: {:08X} from {:.1f} m up", a->GetFormID(), up);
+				}
 			} else if (w[0] == "fus" && w.size() >= 2) {
 				if (auto* a = actor(1)) {
 					const float force = w.size() >= 3 ? std::stof(w[2]) : 15.0f;
