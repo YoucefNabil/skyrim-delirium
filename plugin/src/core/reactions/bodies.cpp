@@ -14,6 +14,10 @@ namespace delirium
 	{
 		constexpr float kTouch = 0.32f;  // m between two bodies' centres: touching (a thrown body's stopped at 0.27-0.29)
 		constexpr float kNear = 250.0f;  // game units between the two actors: worth looking at their bodies
+		// a standing NPC's bodies are in Skyrim's world only while someone Delirium has is this near (a body thrown at
+		// 15 m/s is still two looks away), and until this long after: everyone else is exactly as Skyrim has them
+		constexpr float kReach = 1000.0f;  // game units
+		constexpr auto  kCalm = std::chrono::seconds(3);
 		constexpr float kMostOverlap = 0.05f;  // m another's capsule may be inside one of her parts: deeper, it is thinned
 		                                       // (seen: a capsule 0.3 m inside her threw her arm out at 9 m/s)
 
@@ -61,6 +65,18 @@ namespace delirium
 		}
 		std::scoped_lock l(lock_);
 		return std::ranges::any_of(active_, [&](const auto& a) { return a->actor.get().get() == a_actor && !a->knockQueued && (!a->ragdolled || a->pinned); });
+	}
+
+	bool Engine::Busy(const RE::NiPoint3& a_at, float a_within)
+	{
+		if (g_count.load(std::memory_order_relaxed) == 0) {
+			return false;
+		}
+		std::scoped_lock l(lock_);
+		return std::ranges::any_of(active_, [&](const auto& a) {
+			const auto p = a->actor.get();
+			return p && p->GetPosition().GetDistance(a_at) <= a_within;
+		});
 	}
 
 	void Engine::Others(RE::Actor* a_actor, bool a_upright)
@@ -176,11 +192,35 @@ namespace delirium
 				std::erase_if(lookedAt_, [&](const auto& p) { return now - p.second > std::chrono::seconds(10); });
 			}
 		}
-		auto* race = a_actor->GetRace();
-		if (!race || !(race->HasKeywordString("ActorTypeNPC") || Creature(a_actor)) || a_actor->IsOnMount() || !world::Bodies(a_actor).at.empty()) {
+		const bool in = !world::Bodies(a_actor).at.empty();
+		const bool busy = Busy(a_actor->GetPosition(), kReach);  // herself too, when Delirium has her
+		bool       calm = false;
+		{
+			const auto       now = std::chrono::steady_clock::now();
+			std::scoped_lock l(meetLock_);
+			if (busy) {
+				busyAt_[a_actor->GetFormID()] = now;
+			} else if (const auto it = busyAt_.find(a_actor->GetFormID()); it == busyAt_.end() || now - it->second > kCalm) {
+				calm = true;
+				busyAt_.erase(a_actor->GetFormID());
+			}
+		}
+		if (in) {
+			// nobody of Delirium's near her any more: the bodies we put in go out again, and she is Skyrim's alone
+			if (calm && std::ranges::contains(world::Added(), a_actor->CreateRefHandle())) {
+				g_tasks->AddTask([h = a_actor->CreateRefHandle()]() {
+					if (const auto a = h.get(); a && Stands(a.get()) && !Engine::Get().Upright(a.get())) {
+						world::Remove(a.get());
+					}
+				});
+			}
 			return;
 		}
-		// she stands with her bodies out of the world (new here, back up from a fall, or Skyrim took them out): in they go
+		auto* race = a_actor->GetRace();
+		if (!busy || !race || !(race->HasKeywordString("ActorTypeNPC") || Creature(a_actor)) || a_actor->IsOnMount()) {
+			return;
+		}
+		// she stands near a Delirium body with her own bodies out of the world: in they go
 		g_tasks->AddTask([h = a_actor->CreateRefHandle()]() {
 			if (const auto a = h.get(); a && Engine::Get().bodies_ && Stands(a.get())) {
 				world::Collide();

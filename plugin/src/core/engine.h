@@ -501,6 +501,8 @@ namespace delirium
 		float         bodyRepeat_{ 1.5f };     // [Bodies] fRepeatAfter: s before the same NPC is struck again
 		std::mutex    meetLock_;               // struckAt_, lookedAt_: every actor's update, any thread
 		std::unordered_map<RE::FormID, std::chrono::steady_clock::time_point> struckAt_, lookedAt_;  // her last blow from a body; her bodies last looked at
+		std::unordered_map<RE::FormID, std::chrono::steady_clock::time_point> busyAt_;  // a Delirium body was last near her (her bodies stay in the world a while after)
+		bool Busy(const RE::NiPoint3& a_at, float a_within);  // someone Delirium has (on their feet or down) is that near, game units
 		std::atomic<bool> leaving_{ false };   // world::Leave is on its way (bCollide switched off)
 		bool Upright(RE::Actor* a_actor);      // Delirium has her on her feet
 		// the other NPCs' bodies near her, as Skyrim's world has them, into her Delirium physics (nm_agent_set_others):
