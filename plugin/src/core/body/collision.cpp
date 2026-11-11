@@ -465,7 +465,12 @@ namespace delirium
 			}
 			++a_stats.bodies;
 			if (!WalkGuarded(&g, cd->shape, &x)) {
-				a_stats.unknown += " crash";
+				// trace: whose body it was (her geometry is missing from the snapshot)
+				const auto* ref = RE::TESHavokUtilities::FindCollidableRef(*cd);
+				const auto* base = ref ? ref->GetBaseObject() : nullptr;
+				a_stats.unknown += std::format(" crash[ref {:08X} base {:08X} '{}' layer {} shape type {}]", ref ? ref->GetFormID() : 0,
+					base ? base->GetFormID() : 0, base ? base->GetName() : "", std::to_underlying(cd->GetCollisionLayer()),
+					cd->shape ? std::to_underlying(cd->shape->type) : 0u);
 			}
 			if (g.Full()) {
 				break;
