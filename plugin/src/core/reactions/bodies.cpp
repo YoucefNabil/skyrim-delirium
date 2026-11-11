@@ -1,5 +1,6 @@
 // Body meets body ([Bodies]): NPCs' ragdoll bodies are in Skyrim's Havok world while they stand (body/world.cpp), so a
-// thrown or falling body stops against them, and a body that comes at a standing NPC hard enough is a blow on her:
+// thrown or falling body stops against them, and a body that comes at a standing NPC hard enough (Havok's own contact
+// on her bodies, body/contacts.cpp) is a blow on her:
 // she reacts in Delirium like to any other blow. The body that does it is one Skyrim has ragdolled, or one Delirium
 // has on its feet (its Havok bodies follow Delirium's pose, body/drive.cpp). The one on its feet is stopped by the
 // others' bodies inside Delirium's own physics: they go into her step as capsules (Others), each frame, from where
@@ -12,7 +13,6 @@ namespace delirium
 {
 	namespace
 	{
-		constexpr float kTouch = 0.32f;  // m between two bodies' centres: touching (a thrown body's stopped at 0.27-0.29)
 		constexpr float kNear = 250.0f;  // game units between the two actors: worth looking at their bodies
 		// a standing NPC's bodies are in Skyrim's world only while someone Delirium has is this near (a body thrown at
 		// 15 m/s is still two looks away), and until this long after: everyone else is exactly as Skyrim has them
@@ -172,10 +172,8 @@ namespace delirium
 		if (!ready_ || a_actor->IsPlayerRef()) {
 			return;
 		}
+		Touched();
 		const bool down = a_actor->IsInRagdollState() && !upright;  // dead on her feet: Skyrim's ragdoll, but Delirium has her up
-		if (down || upright) {
-			Strikes(a_actor, down);
-		}
 		if (down || !Stands(a_actor)) {
 			return;
 		}
@@ -229,72 +227,48 @@ namespace delirium
 		});
 	}
 
-	void Engine::Strikes(RE::Actor* a_body, bool a_down)
+	bool Engine::StruckNow(RE::FormID a_target)
 	{
-		const float   least = a_down ? bodySpeed_ : stumbleSpeed_;
-		world::Sample mine;
-		bool          sampled = false;
-		for (const auto& h : world::Added()) {
-			const auto t = h.get();
-			if (!t || t.get() == a_body || !Stands(t.get()) || t->GetPosition().GetDistance(a_body->GetPosition()) > kNear) {
+		const auto       now = std::chrono::steady_clock::now();
+		std::scoped_lock l(meetLock_);
+		auto&            last = struckAt_[a_target];
+		if (now - last < std::chrono::duration<float>(bodyRepeat_)) {
+			return false;
+		}
+		last = now;
+		if (struckAt_.size() > 256) {
+			std::erase_if(struckAt_, [&](const auto& p) { return now - p.second > std::chrono::seconds(10); });
+		}
+		return true;
+	}
+
+	void Engine::Touched()
+	{
+		for (const auto& t : world::Touches()) {
+			auto* target = RE::TESForm::LookupByID<RE::Actor>(t.who);
+			auto* by = t.by ? RE::TESForm::LookupByID<RE::Actor>(t.by) : nullptr;
+			// a ragdolled body, or one Delirium has on its feet, against one who stands. Skyrim's keyframed ragdoll
+			// bodies keep Havok's moving quality (seen: 4), so Havok reports the contact between two of them too
+			if (!target || !by || !Stands(target)) {
 				continue;
 			}
-			if (!a_down && Upright(t.get())) {
-				continue;  // both on their feet in Delirium: their bodies meet in its physics (Others), no blow on top
-			}
-			if (!sampled) {
-				mine = world::Bodies(a_body);
-				sampled = true;
-			}
-			if (mine.at.empty()) {
-				return;
-			}
-			const auto   hers = world::Bodies(t.get());
-			float        best = 0.0f;
-			RE::NiPoint3 at, vel;
-			for (std::size_t i = 0; i < mine.at.size(); ++i) {
-				for (std::size_t j = 0; j < hers.at.size(); ++j) {
-					auto        gap = hers.at[j] - mine.at[i];
-					const float d = gap.Length();
-					if (d > kTouch || d < 1e-4f) {
-						continue;
-					}
-					gap /= d;
-					// the body has to come at her: her own walk into one that lies still is not a strike
-					if (mine.vel[i].Dot(gap) < 0.5f * least) {
-						continue;
-					}
-					const auto rel = mine.vel[i] - hers.vel[j];
-					if (const float s = rel.Length(); rel.Dot(gap) > 0.0f && s > best) {
-						best = s;
-						at = (mine.at[i] + hers.at[j]) * 0.5f;
-						vel = rel;
-					}
-				}
-			}
-			if (best < least) {
+			// (one Delirium has on her feet too: the other's bodies only stop her in its physics, they do not push her)
+			const bool feet = Upright(by);
+			if (!feet && !by->IsInRagdollState()) {
 				continue;
 			}
-			{
-				const auto       now = std::chrono::steady_clock::now();
-				std::scoped_lock l(meetLock_);
-				auto&            last = struckAt_[t->GetFormID()];
-				if (now - last < std::chrono::duration<float>(bodyRepeat_)) {
-					continue;
-				}
-				last = now;
-				if (struckAt_.size() > 256) {
-					std::erase_if(struckAt_, [&](const auto& p) { return now - p.second > std::chrono::seconds(10); });
-				}
+			// the body has to come at her: her own walk into one that lies still is not a strike
+			const float least = feet ? stumbleSpeed_ : bodySpeed_;
+			const float speed = t.vel.Length();
+			if (t.coming < 0.5f * least || speed < least || !StruckNow(t.who)) {
+				continue;
 			}
-			logger::info("{:08X}'s body ({}) strikes {:08X} at {:.1f} m/s", a_body->GetFormID(), a_down ? "ragdolled" : "on her feet", t->GetFormID(), best);
-			g_tasks->AddTask([th = h, bh = a_body->CreateRefHandle(), at, vel]() {
-				const auto target = th.get();
-				const auto by = bh.get();
-				if (!target) {
-					return;
+			logger::info("{:08X}'s body ({}) strikes {:08X} at {:.1f} m/s ({:.1f} towards her), Havok's contact", t.by, feet ? "on her feet" : "ragdolled", t.who, speed,
+				t.closing);
+			g_tasks->AddTask([th = target->CreateRefHandle(), bh = by->CreateRefHandle(), at = t.at, vel = t.vel]() {
+				if (const auto hit = th.get()) {
+					Engine::Get().BodyHit(hit.get(), bh.get().get(), at / kUnit, vel);
 				}
-				Engine::Get().BodyHit(target.get(), by.get(), at / kUnit, vel);
 			});
 		}
 	}

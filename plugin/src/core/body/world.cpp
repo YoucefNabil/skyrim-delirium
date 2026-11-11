@@ -8,6 +8,7 @@
 // the filter's Biped bits, as PLANCK and Precision do. Skyrim's ragdoll driver then keeps the bodies on her animation.
 #include "shared.h"
 
+#include "contacts.h"
 #include "world.h"
 
 #include <RE/H/hkpCapsuleShape.h>
@@ -20,7 +21,9 @@ namespace delirium::world
 
 		std::mutex                                   g_lock;       // g_added
 		std::vector<RE::ActorHandle>                 g_added;      // whose ragdoll we put in the world
-		std::optional<std::array<std::uint64_t, 64>> g_filterWas;  // Skyrim's layer rows, before ours (main thread)
+		// the bits we set in the collision filter's layer rows that were not set before (main thread). Only those are
+		// ours to clear: another mod (PLANCK, Precision) may have set its own in the same rows since
+		std::optional<std::array<std::uint64_t, 64>> g_filterOurs;
 		std::atomic<bool>                            g_changed{ false };
 
 		// every graph of hers with a ragdoll, under the manager's update lock; false: none
@@ -48,10 +51,18 @@ namespace delirium::world
 			return cell ? cell->GetbhkWorld() : nullptr;
 		}
 
-		void Allow(RE::bhkCollisionFilter& a_f, Layer a_a, Layer a_b)
+		void Allow(RE::bhkCollisionFilter& a_f, std::array<std::uint64_t, 64>& a_ours, Layer a_a, Layer a_b)
 		{
-			a_f.layerBitfields[std::to_underlying(a_a)] |= 1ull << std::to_underlying(a_b);
-			a_f.layerBitfields[std::to_underlying(a_b)] |= 1ull << std::to_underlying(a_a);
+			auto set = [&](Layer a_row, Layer a_bit) {
+				const auto bit = 1ull << std::to_underlying(a_bit);
+				auto&      row = a_f.layerBitfields[std::to_underlying(a_row)];
+				if (!(row & bit)) {
+					row |= bit;
+					a_ours[std::to_underlying(a_row)] |= bit;
+				}
+			};
+			set(a_a, a_b);
+			set(a_b, a_a);
 		}
 	}
 
@@ -153,8 +164,9 @@ namespace delirium::world
 			}
 			return false;
 		}
-		bool       added = false;
-		const bool found = ForGraphs(a_actor, [&](RE::BShkbAnimationGraph& g) {
+		bool                           added = false;
+		std::vector<RE::hkpRigidBody*> bodies;
+		const bool                     found = ForGraphs(a_actor, [&](RE::BShkbAnimationGraph& g) {
 			if (!g.physicsWorld) {
 				g.physicsWorld = world;
 			}
@@ -162,6 +174,9 @@ namespace delirium::world
 			const bool           ok = g.AddRagdollToWorld();
 			if (ok) {
 				g.SetRagdollConstraintsFromBhkConstraints();
+				for (auto* b : g.characterInstance.ragdollDriver->ragdoll->rigidBodies) {
+					bodies.push_back(b);
+				}
 			}
 			added = added || ok;
 		});
@@ -170,6 +185,10 @@ namespace delirium::world
 				!found ? "missing" : added ? "added to Skyrim's world" : "NOT added to Skyrim's world");
 		}
 		if (added) {
+			{
+				RE::BSWriteLockGuard wl(world->worldLock);
+				contacts::Listen(a_actor->GetFormID(), bodies);
+			}
 			const auto       h = a_actor->CreateRefHandle();
 			std::scoped_lock l(g_lock);
 			// the list only grows by who stands here now: the ones that are gone make room
@@ -193,6 +212,12 @@ namespace delirium::world
 				removed = g.RemoveRagdollFromWorld() || removed;
 			}
 		});
+		if (auto* world = CellWorld(a_actor)) {
+			RE::BSWriteLockGuard wl(world->worldLock);
+			contacts::Forget(a_actor->GetFormID());
+		} else {
+			contacts::Forget(a_actor->GetFormID());
+		}
 		std::scoped_lock l(g_lock);
 		std::erase(g_added, a_actor->CreateRefHandle());
 		return removed;
@@ -206,25 +231,24 @@ namespace delirium::world
 
 	void Collide()
 	{
-		if (g_filterWas) {
+		if (g_filterOurs) {
 			return;
 		}
 		auto* f = RE::bhkCollisionFilter::GetSingleton();
 		if (!f) {
 			return;
 		}
-		g_filterWas.emplace();
-		std::ranges::copy(f->layerBitfields, g_filterWas->begin());
+		auto& ours = g_filterOurs.emplace();
 		// a standing NPC's bodies are on Biped; a seated or furniture-bound one's on BipedNoCC (seen: Lydia, Bassianus
 		// in the inn); a knocked-down one's on DeadBip, living or not (seen: Lydia in the air after Skyrim's push)
 		for (const auto a : { Layer::kBiped, Layer::kBipedNoCC, Layer::kDeadBip }) {
-			Allow(*f, a, Layer::kBiped);
-			Allow(*f, a, Layer::kBipedNoCC);
-			Allow(*f, a, Layer::kDeadBip);
+			Allow(*f, ours, a, Layer::kBiped);
+			Allow(*f, ours, a, Layer::kBipedNoCC);
+			Allow(*f, ours, a, Layer::kDeadBip);
 		}
 		g_changed = true;
-		logger::info("world: biped bodies meet each other; Biped's row {:016X} (was {:016X})", f->layerBitfields[std::to_underlying(Layer::kBiped)],
-			(*g_filterWas)[std::to_underlying(Layer::kBiped)]);
+		logger::info("world: biped bodies meet each other; Biped's row {:016X} (our bits {:016X})", f->layerBitfields[std::to_underlying(Layer::kBiped)],
+			ours[std::to_underlying(Layer::kBiped)]);
 	}
 
 	bool Changed()
@@ -234,12 +258,14 @@ namespace delirium::world
 
 	void Leave()
 	{
-		if (g_filterWas) {
+		if (g_filterOurs) {
 			if (auto* f = RE::bhkCollisionFilter::GetSingleton()) {
-				std::ranges::copy(*g_filterWas, std::begin(f->layerBitfields));
-				logger::info("world: filter as Skyrim had it");
+				for (std::size_t i = 0; i < g_filterOurs->size(); ++i) {
+					f->layerBitfields[i] &= ~(*g_filterOurs)[i];
+				}
+				logger::info("world: our filter bits off again");
 			}
-			g_filterWas.reset();
+			g_filterOurs.reset();
 		}
 		std::vector<RE::ActorHandle> added;
 		{
@@ -253,6 +279,7 @@ namespace delirium::world
 				out += Remove(a.get());
 			}
 		}
+		contacts::ForgetAll();
 		g_changed = false;
 		if (!added.empty()) {
 			logger::info("world: {} standing ragdolls out of Skyrim's world again", out);
@@ -261,6 +288,7 @@ namespace delirium::world
 
 	void Log(RE::Actor* a_actor)
 	{
+		logger::info("world: {}", Heard());
 		ForGraphs(a_actor, [&](RE::BShkbAnimationGraph& g) {
 			auto* d = g.characterInstance.ragdollDriver.get();
 			int   in = 0, n = 0;

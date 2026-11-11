@@ -508,7 +508,8 @@ namespace delirium
 		// the other NPCs' bodies near her, as Skyrim's world has them, into her Delirium physics (nm_agent_set_others):
 		// on her feet she is stopped by them there. None while she is down (Havok has her) or with [Bodies] off.
 		void Others(RE::Actor* a_actor, bool a_upright);
-		void Strikes(RE::Actor* a_body, bool a_down);  // whom of the standing NPCs her moving body strikes this frame
+		void Touched();                        // any thread: what Havok reported touching the standing NPCs' bodies; a ragdolled body's is a blow
+		bool StruckNow(RE::FormID a_target);   // a body strikes her now: false while her last such blow is too fresh ([Bodies] fRepeat)
 		std::mutex    bumpLock_;               // bumpAt_: bumps come on any thread
 		std::unordered_map<RE::FormID, std::chrono::steady_clock::time_point> bumpAt_;  // her last bump (any, pushed or not)
 		bool          melee_{ true };           // [Melee] bReact: blows push her while Delirium has her
