@@ -3,6 +3,14 @@
 
 namespace delirium
 {
+	bool SkyrimBody::InWorld() const
+	{
+		if (!driver || !driver->ragdoll) {
+			return false;
+		}
+		return std::ranges::any_of(driver->ragdoll->rigidBodies, [](const RE::hkpRigidBody* b) { return b && b->world; });
+	}
+
 	SkyrimBody::Far SkyrimBody::Missed() const
 	{
 		Far most;

@@ -1,0 +1,225 @@
+// Skyrim's own Havok world: standing NPCs' ragdoll bodies in it, and biped bodies colliding (body/world.h).
+//
+// Skyrim builds a living NPC's ragdoll (18 bodies, keyframed, layer Biped) but keeps it out of the Havok world until
+// she is knocked down, and its collision filter lets Biped bodies meet only static geometry (seen with Cheat Engine on
+// 1.6.1170: bodies' world 0, graph's physicsWorld set, canAddRagdollToWorld 1; Biped's row has no Biped, Clutter or
+// Props bit). So nothing a falling body does can reach a standing NPC, and two fallen living NPCs pass through each
+// other. Here: the graph's own AddRagdollToWorld (BSIRagdollDriver slot 2; returns at once without physicsWorld) and
+// the filter's Biped bits, as PLANCK and Precision do. Skyrim's ragdoll driver then keeps the bodies on her animation.
+#include "shared.h"
+
+#include "world.h"
+
+namespace delirium::world
+{
+	namespace
+	{
+		using Layer = RE::COL_LAYER;
+
+		std::mutex                                   g_lock;       // g_added
+		std::vector<RE::ActorHandle>                 g_added;      // whose ragdoll we put in the world
+		std::optional<std::array<std::uint64_t, 64>> g_filterWas;  // Skyrim's layer rows, before ours (main thread)
+		std::atomic<bool>                            g_changed{ false };
+
+		// every graph of hers with a ragdoll, under the manager's update lock; false: none
+		template <class F>
+		bool ForGraphs(RE::Actor* a_actor, F&& a_do)
+		{
+			RE::BSTSmartPointer<RE::BSAnimationGraphManager> mgr;
+			if (!a_actor->GetAnimationGraphManager(mgr) || !mgr) {
+				return false;
+			}
+			RE::BSSpinLockGuard l(mgr->GetRuntimeData().updateLock);
+			bool                any = false;
+			for (auto& g : mgr->graphs) {
+				if (g && g->characterInstance.ragdollDriver && g->characterInstance.ragdollDriver->ragdoll) {
+					a_do(*g);
+					any = true;
+				}
+			}
+			return any;
+		}
+
+		RE::bhkWorld* CellWorld(RE::Actor* a_actor)
+		{
+			auto* cell = a_actor->GetParentCell();
+			return cell ? cell->GetbhkWorld() : nullptr;
+		}
+
+		void Allow(RE::bhkCollisionFilter& a_f, Layer a_a, Layer a_b)
+		{
+			a_f.layerBitfields[std::to_underlying(a_a)] |= 1ull << std::to_underlying(a_b);
+			a_f.layerBitfields[std::to_underlying(a_b)] |= 1ull << std::to_underlying(a_a);
+		}
+	}
+
+	Sample Bodies(RE::Actor* a_actor)
+	{
+		Sample s;
+		ForGraphs(a_actor, [&](RE::BShkbAnimationGraph& g) {
+			for (auto* b : g.characterInstance.ragdollDriver->ragdoll->rigidBodies) {
+				if (!b || !b->world) {
+					continue;
+				}
+				const auto& p = b->motion.motionState.sweptTransform.centerOfMass1.quad.m128_f32;
+				const auto& v = b->motion.linearVelocity.quad.m128_f32;
+				s.at.emplace_back(p[0], p[1], p[2]);
+				s.vel.emplace_back(v[0], v[1], v[2]);
+				s.mean += s.at.back();
+				s.fastest = std::max(s.fastest, std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]));
+			}
+		});
+		if (!s.at.empty()) {
+			s.mean /= static_cast<float>(s.at.size());
+		}
+		return s;
+	}
+
+	bool Add(RE::Actor* a_actor, bool a_log)
+	{
+		auto* world = CellWorld(a_actor);
+		if (!world) {
+			if (a_log) {
+				logger::warn("world: {:08X} has no Havok world", a_actor->GetFormID());
+			}
+			return false;
+		}
+		bool       added = false;
+		const bool found = ForGraphs(a_actor, [&](RE::BShkbAnimationGraph& g) {
+			if (!g.physicsWorld) {
+				g.physicsWorld = world;
+			}
+			RE::BSWriteLockGuard wl(world->worldLock);
+			const bool           ok = g.AddRagdollToWorld();
+			if (ok) {
+				g.SetRagdollConstraintsFromBhkConstraints();
+			}
+			added = added || ok;
+		});
+		if (a_log) {
+			logger::info("world: {:08X} '{}' ragdoll {}", a_actor->GetFormID(), a_actor->GetName(),
+				!found ? "missing" : added ? "added to Skyrim's world" : "NOT added to Skyrim's world");
+		}
+		if (added) {
+			const auto       h = a_actor->CreateRefHandle();
+			std::scoped_lock l(g_lock);
+			// the list only grows by who stands here now: the ones that are gone make room
+			std::erase_if(g_added, [&](const RE::ActorHandle& x) { return x == h || !x.get(); });
+			g_added.push_back(h);
+			g_changed = true;
+		}
+		return added;
+	}
+
+	bool Remove(RE::Actor* a_actor)
+	{
+		bool removed = false;
+		ForGraphs(a_actor, [&](RE::BShkbAnimationGraph& g) {
+			// seen: the graph's physicsWorld is null again while its bodies are still in the cell's world
+			if (auto* world = g.physicsWorld ? g.physicsWorld : CellWorld(a_actor)) {
+				if (!g.physicsWorld) {
+					g.physicsWorld = world;
+				}
+				RE::BSWriteLockGuard wl(world->worldLock);
+				removed = g.RemoveRagdollFromWorld() || removed;
+			}
+		});
+		std::scoped_lock l(g_lock);
+		std::erase(g_added, a_actor->CreateRefHandle());
+		return removed;
+	}
+
+	std::vector<RE::ActorHandle> Added()
+	{
+		std::scoped_lock l(g_lock);
+		return g_added;
+	}
+
+	void Collide()
+	{
+		if (g_filterWas) {
+			return;
+		}
+		auto* f = RE::bhkCollisionFilter::GetSingleton();
+		if (!f) {
+			return;
+		}
+		g_filterWas.emplace();
+		std::ranges::copy(f->layerBitfields, g_filterWas->begin());
+		// a standing NPC's bodies are on Biped; a seated or furniture-bound one's on BipedNoCC (seen: Lydia, Bassianus
+		// in the inn); a knocked-down one's on DeadBip, living or not (seen: Lydia in the air after Skyrim's push)
+		for (const auto a : { Layer::kBiped, Layer::kBipedNoCC, Layer::kDeadBip }) {
+			Allow(*f, a, Layer::kBiped);
+			Allow(*f, a, Layer::kBipedNoCC);
+			Allow(*f, a, Layer::kDeadBip);
+		}
+		g_changed = true;
+		logger::info("world: biped bodies meet each other; Biped's row {:016X} (was {:016X})", f->layerBitfields[std::to_underlying(Layer::kBiped)],
+			(*g_filterWas)[std::to_underlying(Layer::kBiped)]);
+	}
+
+	bool Changed()
+	{
+		return g_changed.load(std::memory_order_relaxed);
+	}
+
+	void Leave()
+	{
+		if (g_filterWas) {
+			if (auto* f = RE::bhkCollisionFilter::GetSingleton()) {
+				std::ranges::copy(*g_filterWas, std::begin(f->layerBitfields));
+				logger::info("world: filter as Skyrim had it");
+			}
+			g_filterWas.reset();
+		}
+		std::vector<RE::ActorHandle> added;
+		{
+			std::scoped_lock l(g_lock);
+			added.swap(g_added);
+		}
+		// Skyrim's own ragdoll (she was knocked down meanwhile) stays in: only the standing ones go back out
+		int out = 0;
+		for (const auto& h : added) {
+			if (const auto a = h.get(); a && !a->IsInRagdollState()) {
+				out += Remove(a.get());
+			}
+		}
+		g_changed = false;
+		if (!added.empty()) {
+			logger::info("world: {} standing ragdolls out of Skyrim's world again", out);
+		}
+	}
+
+	void Log(RE::Actor* a_actor)
+	{
+		ForGraphs(a_actor, [&](RE::BShkbAnimationGraph& g) {
+			auto* d = g.characterInstance.ragdollDriver.get();
+			int   in = 0, n = 0;
+			int   motions[16]{};
+			int   layers[64]{};
+			for (auto* b : d->ragdoll->rigidBodies) {
+				if (!b) {
+					continue;
+				}
+				++n;
+				in += b->world ? 1 : 0;
+				++motions[std::to_underlying(b->motion.type.get()) & 15];
+				++layers[std::to_underlying(b->collidable.GetCollisionLayer()) & 63];
+			}
+			std::string m, l;
+			for (int i = 0; i < 16; ++i) {
+				if (motions[i]) {
+					m += std::format(" {}x motion {}", motions[i], i);
+				}
+			}
+			for (int i = 0; i < 64; ++i) {
+				if (layers[i]) {
+					l += std::format(" {}x layer {}", layers[i], i);
+				}
+			}
+			logger::info("world: {:08X} '{}': {} bodies, {} in a world;{};{}; physicsWorld {}, driver enabled {}, powered {}, rigid-body {}, all keyframed {}",
+				a_actor->GetFormID(), a_actor->GetName(), n, in, m, l, g.physicsWorld ? "set" : "null", d->isEnabled, d->isPoweredControllerEnabled,
+				d->isRigidBodyControllerEnabled, d->allBonesKeyframed);
+		});
+	}
+}

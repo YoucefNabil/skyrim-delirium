@@ -1,6 +1,8 @@
 // Start-up (Delirium's DLL, the character, the rig), shut-down, the loading screen.
 #include "shared.h"
 
+#include "body/world.h"
+
 namespace delirium
 {
 	namespace
@@ -231,6 +233,7 @@ namespace delirium
 		while (!active_.empty()) {
 			Release(active_.size() - 1, "core unloading");
 		}
+		world::Leave();
 		UnhookUpdate3D();
 		UnhookPresent();
 		if (build_) {

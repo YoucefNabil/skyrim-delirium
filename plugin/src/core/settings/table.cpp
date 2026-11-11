@@ -122,6 +122,19 @@ namespace delirium
 			F("Bump", "fRepeatAfter", bumpRepeat_, 1.0, Min(0.0), Timing, P | D, "Bump again after",
 				"Skyrim bumps every frame you touch: one push per run-in, and a new one only after this many seconds without contact"),
 
+			// [Bodies]
+			B("Bodies", "bCollide", bodies_, true, Reactions, P, "Bodies collide",
+				"NPCs' bodies are in Skyrim's physics world while they stand: a thrown or falling body stops against them, and a body "
+				"that hits one hard enough is a blow on them (the stand.bump row), from a ragdoll or from an NPC Delirium has stumbling"),
+			F("Bodies", "fSpeed", bodySpeed_, 2.5, Min(0.0), Strength, P | D, "Body strikes from",
+				"A ragdolled body is a blow on a standing NPC from this speed against them, m/s"),
+			F("Bodies", "fStumbleSpeed", stumbleSpeed_, 0.8, Min(0.0), Strength, P | D, "Stumble strikes from",
+				"The same for an NPC Delirium has on their feet (a stagger into someone); they are pushed back as hard"),
+			F("Bodies", "fPush", bodyPush_, 12.0, Min(0.0), Strength, P, "Body push", "Push per m/s the body comes at them, N s"),
+			F("Bodies", "fMaxPush", bodyMaxPush_, 160.0, Min(0.0), Strength, P, "Body push at most", "A body's push at most, N s"),
+			F("Bodies", "fRepeatAfter", bodyRepeat_, 1.5, Min(0.0), Timing, P | D, "Body strikes again after",
+				"Seconds before the same NPC takes another blow from a body"),
+
 			// [Melee]
 			B("Melee", "bReact", melee_, true, Reactions, P, "Melee blows",
 				"While Delirium has the NPC, every blow reacts: a light one flinches, a heavier one makes them step, past that they fall"),

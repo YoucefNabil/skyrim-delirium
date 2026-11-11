@@ -70,6 +70,12 @@ namespace delirium
 		b("Bump.bReplace", bumps_);
 		f("Bump.fPush", bumpPush_);
 		f("Bump.fRepeatAfter", bumpRepeat_);
+		b("Bodies.bCollide", bodies_);
+		f("Bodies.fSpeed", bodySpeed_);
+		f("Bodies.fStumbleSpeed", stumbleSpeed_);
+		f("Bodies.fPush", bodyPush_);
+		f("Bodies.fMaxPush", bodyMaxPush_);
+		f("Bodies.fRepeatAfter", bodyRepeat_);
 		f("Hits.fDamageRef", damageRef_);
 		f("Hits.fExponent", damageExp_);
 		f("Hits.fScaleMin", damageMin_);

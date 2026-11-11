@@ -1,6 +1,7 @@
 // The command file (tools\hotreload.ps1 -Cmd) and the test keys (F7 push, F2 release).
 #include "shared.h"
 #include "settings/table.h"
+#include "body/world.h"
 
 namespace delirium
 {
@@ -17,6 +18,8 @@ namespace delirium
 	//   undead [dist]            place a draugr, a skeleton and a falmer side by side in front of the player
 	//   npcs <word>              log the non-unique NPCs whose race editor ID contains the word (bases for spawn)
 	//   near                     log the NPCs near the player
+	//   bodies add|remove|log <hex formid>  her ragdoll bodies into / out of Skyrim's Havok world while she stands; what is in it
+	//   throw <hex thrown> <hex target> [force]  stand the first NPC before the second, Skyrim's push into her (15), log what their bodies did
 	//   nodes <hex formid>       log every node of that NPC's 3D with its address (Cheat Engine breakpoints)
 	//   show on|off              her meshes read the finished pose (default) / the live bones (before/after check)
 	//   status                   log what is active
@@ -222,6 +225,22 @@ namespace delirium
 			} else if (w[0] == "damp" && w.size() >= 2) {
 				damp_ = std::clamp(std::stof(std::string(w[1])), 0.0f, 1.0f);
 				logger::info("joint damping {:.2f}", damp_);
+			} else if (w[0] == "bodies" && w.size() >= 3) {
+				if (auto* a = actor(2)) {
+					if (w[1] == "add") {
+						world::Collide();
+						world::Add(a, true);
+					} else if (w[1] == "remove") {
+						logger::info("world: {:08X} ragdoll {} Skyrim's world", a->GetFormID(), world::Remove(a) ? "out of" : "was not in");
+					}
+					world::Log(a);
+				}
+			} else if (w[0] == "throw" && w.size() >= 3) {
+				auto* a = actor(1);
+				auto* b = actor(2);
+				if (a && b) {
+					Throw(a, b, w.size() >= 4 ? std::stof(w[3]) : 15.0f);
+				}
 			} else if (w[0] == "near") {
 				// NPCs near the player: id, name, distance
 				auto* player = RE::PlayerCharacter::GetSingleton();

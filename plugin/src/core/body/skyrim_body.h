@@ -58,5 +58,6 @@ namespace delirium
 		float DriveToTargets(float a_dt, float a_age);
 		// Skyrim's own driver has run: our velocities go back on. Returns how far it had changed them
 		Far Reapply();
+		[[nodiscard]] bool InWorld() const;  // any of her ragdoll bodies is in a Havok world
 	};
 }

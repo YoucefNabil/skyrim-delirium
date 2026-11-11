@@ -446,7 +446,7 @@ namespace delirium
 			}
 			if (a_after) {
 				const auto [over, overBody] = a.sky.Reapply();
-				if (!TorqueMode(a) && a.traceN < 100) {
+				if (a.ragdolled && !TorqueMode(a) && a.traceN < 100) {
 					logger::info("    kf {:.3f}: Skyrim's driver changed a body's velocity by up to {:.2f} m/s ({})", a.age, over, overBody);
 				}
 				return;
@@ -474,8 +474,9 @@ namespace delirium
 					b.hasTarget = true;
 				}
 			}
-			// F7's first 0.15 s (the push is Delirium's): the velocities that carry each body onto Delirium's pose in one step
-			if (a.traceN < 100) {
+			// on her feet with her bodies in Skyrim's world, and F7's first 0.15 s down (the push is Delirium's): the
+			// velocities that carry each body onto Delirium's pose in one step
+			if (a.ragdolled && a.traceN < 100) {
 				const auto [miss, missBody] = a.sky.Missed();
 				logger::info("    kf {:.3f}: dt {:.4f}, bodies ended up to {:.3f} m from where the last step sent them ({})", a.age, a_dt, miss, missBody);
 			}

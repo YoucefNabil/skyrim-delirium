@@ -126,6 +126,16 @@ namespace delirium
 		// place of Skyrim's stumble
 		bool OnBump(RE::Actor* a_target, RE::Actor* a_bumper);
 		void Bump(RE::Actor* a_target, RE::Actor* a_bumper);  // main thread
+		// body meets body ([Bodies], reactions/bodies.cpp). Every animation update, before her own: a standing NPC's
+		// ragdoll bodies go into Skyrim's Havok world (body/world.cpp), and a body that comes at one of them hard enough
+		// (a ragdolled one, or one Delirium has on its feet) is a blow on her
+		void Meet(RE::Actor* a_actor);
+		// main thread: a body (a_by's) struck her where she stands, at a_at (game units) moving a_vel (m/s against her)
+		void BodyHit(RE::Actor* a_target, RE::Actor* a_by, const RE::NiPoint3& a_at, const RE::NiPoint3& a_vel);
+		// debug (debug/throw.cpp): stand a_thrown 1 m before a_target on the player's line to her, Skyrim's own push into
+		// her, and log what the two sets of bodies did over the next 2 s
+		void Throw(RE::Actor* a_thrown, RE::Actor* a_target, float a_force);
+		void ThrowStep(RE::Actor* a_actor);  // every animation update: the throw being measured
 		// her killing blow (Character::KillImpl, before Skyrim's): true holds the death back, at 1 health, for up to
 		// [Deaths] fDyingTime s: she dies on her feet in Delirium (wounded shot, stagger, collapse), then really dies
 		bool OnKill(RE::Actor* a_actor, RE::Actor* a_attacker, float a_damage, bool a_sendEvent, bool a_ragdollInstant);
@@ -380,7 +390,8 @@ namespace delirium
 		void Unshow(Active& a);
 		bool SmoothRoot(Active& a, RE::Actor* a_actor);  // ragdolled: the top node turns no faster than cloth physics allows (true: moved)
 		void AddWorld(Active& a, RE::Actor* a_actor, const RE::NiPoint3& a_center, bool a_quiet);  // Skyrim's collision around a_center
-		void Calibrate(Active& a, RE::Actor* a_actor);
+		void LinkBodies(Active& a, RE::Actor* a_actor);  // which of Skyrim's ragdoll bodies sits on which Delirium part (sky.linked)
+		void Calibrate(Active& a, RE::Actor* a_actor);   // she went down: the links again, and Skyrim's joints eased for our torques
 		void DumpRagdoll(const Active& a, RE::Actor* a_actor);  // Skyrim's ragdoll joints to a JSON for the fit-test body
 		void RecordPose(Active& a, RE::Actor* a_actor, const std::array<V3, 21>& pos, const std::array<Q, 21>& rot);
 		void StandingLegs(const Active& a, std::array<V3, 21>& pos, std::array<Q, 21>& rot) const;
@@ -460,6 +471,17 @@ namespace delirium
 		bool          bumps_{ true };          // [Bump] bReplace: a big bump (run into) is played by Delirium, not Skyrim's stumble
 		float         bumpPush_{ 50.0f };      // [Bump] fPush: N s, along the bumper's run
 		float         bumpRepeat_{ 1.0f };     // [Bump] fRepeatAfter: s of no contact before a bump pushes again
+		bool          bodies_{ true };         // [Bodies] bCollide: standing NPCs' bodies are in Skyrim's world, a body that hits one is a blow
+		float         bodySpeed_{ 2.5f };      // [Bodies] fSpeed: m/s a ragdolled body comes at her from which it is a blow
+		float         stumbleSpeed_{ 0.8f };   // [Bodies] fStumbleSpeed: the same for a body Delirium has on its feet
+		float         bodyPush_{ 12.0f };      // [Bodies] fPush: N s per m/s it comes at her
+		float         bodyMaxPush_{ 160.0f };  // [Bodies] fMaxPush: N s at most
+		float         bodyRepeat_{ 1.5f };     // [Bodies] fRepeatAfter: s before the same NPC is struck again
+		std::mutex    meetLock_;               // struckAt_, lookedAt_: every actor's update, any thread
+		std::unordered_map<RE::FormID, std::chrono::steady_clock::time_point> struckAt_, lookedAt_;  // her last blow from a body; her bodies last looked at
+		std::atomic<bool> leaving_{ false };   // world::Leave is on its way (bCollide switched off)
+		bool Upright(RE::Actor* a_actor);      // Delirium has her on her feet
+		void Strikes(RE::Actor* a_body, bool a_down);  // whom of the standing NPCs her moving body strikes this frame
 		std::mutex    bumpLock_;               // bumpAt_: bumps come on any thread
 		std::unordered_map<RE::FormID, std::chrono::steady_clock::time_point> bumpAt_;  // her last bump (any, pushed or not)
 		bool          melee_{ true };           // [Melee] bReact: blows push her while Delirium has her

@@ -23,7 +23,7 @@ namespace delirium
 		};
 	}
 
-	void Engine::Calibrate(Active& a, RE::Actor* a_actor)
+	void Engine::LinkBodies(Active& a, RE::Actor* a_actor)
 	{
 		// Skyrim hangs each ragdoll body on a skeleton bone's collision object
 		std::unordered_map<const void*, RE::NiAVObject*> owner;
@@ -219,10 +219,15 @@ namespace delirium
 				logger::info("{:08X}: bodies without a part ride on a neighbour:{}", a_actor->GetFormID(), fl);
 			}
 		}
-		// Skyrim's ragdoll is the body (its own mass, gravity, collision); DriveRagdoll only moves it
 		a.sky.linked = true;
 		logger::info("{:08X}: Skyrim ragdoll has {} bodies, {} on bones:{}", a_actor->GetFormID(),
 			a.sky.driver->ragdoll->rigidBodies.size(), a.sky.bodies.size(), list);
+	}
+
+	void Engine::Calibrate(Active& a, RE::Actor* a_actor)
+	{
+		// Skyrim's ragdoll is the body from here (its own mass, gravity, collision); DriveRagdoll only moves it
+		LinkBodies(a, a_actor);
 		// trace: the joints' own friction and motors (they may eat the behaviours' small steady push)
 		{
 			std::string js;

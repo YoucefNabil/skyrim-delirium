@@ -225,6 +225,8 @@ namespace delirium
 
 	void Engine::AfterAnimation(RE::Actor* a_actor, float a_delta)
 	{
+		ThrowStep(a_actor);
+		Meet(a_actor);
 		if (takeOver_ && ready_ && !a_actor->IsPlayerRef()) {
 			if (a_actor->IsInRagdollState()) {
 				TryTakeOver(a_actor, a_actor->IsDead());
@@ -808,6 +810,12 @@ namespace delirium
 				if (a.takeover) {
 					InheritVelocity(a);
 				}
+			}
+			if (bodies_ && !a.ragdolled && !a.sky.linked && !a_actor->IsInRagdollState() && a.sky.InWorld()) {
+				// on her feet with her bodies in Skyrim's world ([Bodies]): from here they follow Delirium's pose
+				// (DriveRagdoll), so other bodies meet her where she is drawn, not where her animation would have her
+				LinkBodies(a, a_actor);
+				logger::info("{:08X}: on her feet with {} bodies in Skyrim's world: they follow Delirium's pose", a_actor->GetFormID(), a.sky.bodies.size());
 			}
 			if (TorqueMode(a)) {
 				// Skyrim's ragdoll is the body: Skyrim poses the bones from it. Not yet through F7's lead-in: Skyrim
