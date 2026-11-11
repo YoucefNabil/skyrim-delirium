@@ -16,7 +16,15 @@ namespace delirium
 			return;
 		}
 		const float drop = (cc->fallStartHeight - a_actor->GetPosition().z) * kUnit;
-		if (drop < highFallDrop_ || !Eligible(a_actor, "high fall", true)) {
+		// a drop she can have fallen in her time in the air. Seen: getting up from a ragdoll the controller is in the
+		// air for a frame with fallStartHeight 0, which below z 0 (Whiterun) read as a 49 m fall after 0.02 s; she was
+		// taken down again on every get-up
+		constexpr float kMostG = 40.0f;  // m/s2, well over Skyrim's
+		const float     fallen = 1.0f + 0.5f * kMostG * cc->fallTime * cc->fallTime;
+		// and she is coming down: also seen, a controller left in the air for seconds on an NPC standing still
+		RE::NiPoint3 vel;
+		a_actor->GetLinearVelocity(vel);
+		if (drop < highFallDrop_ || drop > fallen || vel.z * kUnit > -3.0f || !Eligible(a_actor, "high fall", true)) {
 			return;
 		}
 		std::scoped_lock l(lock_);
