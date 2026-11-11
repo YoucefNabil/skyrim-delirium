@@ -134,11 +134,19 @@ namespace delirium
 			}
 		}
 		dl.nm_agent_set_mode(act->agent, NM_MODE_LEAD);
-		// on her feet she goes in moving as her animation moved her (running, swinging, falling): no stop dead. Taken
-		// over from Skyrim's ragdoll its bodies' own speeds come in later (InheritVelocity)
+		// in the air (a fall, a jump) she goes in moving as her animation moved her: no stop dead. On the ground the
+		// balancer starts from a stand, and with a run's speed and its swinging limbs she fell to any blow (seen: a 20
+		// damage spell on a runner, down in 0.3 s): she keeps [Test] fCarrySpeed of her travel, the whole body as one
+		// and level, none of the limbs' swing. Taken over from Skyrim's ragdoll its bodies' own speeds come in later
+		// (InheritVelocity)
 		std::array<V3, 21> pv{}, pw{};
 		if (!a_takeover) {
 			PartSpeeds(*act, pos, rot, pv, pw);
+			auto* cc = a_actor->GetCharController();
+			if (!cc || cc->context.currentState != RE::hkpCharacterStateType::kInAir) {
+				pv.fill({ pv[0].x * carrySpeed_, pv[0].y * carrySpeed_, 0.0f });
+				pw.fill({});
+			}
 		}
 		for (int i = 0; i < 21; ++i) {
 			const float p[3]{ pos[i].x, pos[i].y, pos[i].z }, q[4]{ rot[i].x, rot[i].y, rot[i].z, rot[i].w };

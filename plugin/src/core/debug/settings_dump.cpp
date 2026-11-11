@@ -23,6 +23,7 @@ namespace delirium
 		b("Test.bFollowAnimation", followAnimation_);
 		b("Test.bRecordPoses", recordPoses_);
 		b("Test.bStandingLegs", standingLegs_);
+		f("Test.fCarrySpeed", carrySpeed_);
 		b("Collision.bWorldCollision", collision_);
 		f("Collision.fRadius", colRadius_);
 		f("Collision.fHeight", colHeight_);

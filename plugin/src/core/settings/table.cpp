@@ -64,6 +64,8 @@ namespace delirium
 				"The body holds the NPC's live animation pose (guard up, gestures) instead of a fixed stance"),
 			B("Test", "bRecordPoses", recordPoses_, false, Advanced, kHidden, "Record poses", "Dev: the held pose each frame while standing, for fit-test"),
 			B("Test", "bStandingLegs", standingLegs_, true, Advanced, kHidden, "Standing legs", "Dev: the legs hold the body's own stance, not the animation's"),
+			F("Test", "fCarrySpeed", carrySpeed_, 0.0, Range(0.0, 1.0), Advanced, kHidden, "Carried speed",
+				"Dev: share of her travel speed (running, walking) she keeps going into Delirium on the ground (0 = goes in still)"),
 
 			// [Ragdoll]
 			B("Ragdoll", "bTakeOver", takeOver_, true, Reactions, P, "Take over Skyrim's ragdolls",

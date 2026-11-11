@@ -440,6 +440,7 @@ namespace delirium
 		bool          autoRelease_{ true };
 		bool          followAnimation_{ true };
 		bool          standingLegs_{ true };  // [Test] bStandingLegs: the legs hold the body's own stance, not the animation's
+		float         carrySpeed_{ 0.0f };    // [Test] fCarrySpeed: share of her travel speed she keeps going into Delirium on the ground
 		bool          recordPoses_{ false };  // [Test] bRecordPoses: the held pose each frame while standing, for fit-test sweep STANCE_TRACK=
 		int           tracks_{ 0 };
 		bool          collision_{ true };

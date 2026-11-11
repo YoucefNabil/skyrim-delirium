@@ -8,6 +8,7 @@ Test.bAutoRelease = false
 Test.bFollowAnimation = false
 Test.bRecordPoses = false
 Test.bStandingLegs = false
+Test.fCarrySpeed = 0
 Collision.bWorldCollision = false
 Collision.fRadius = -1000000
 Collision.fHeight = -1000000
