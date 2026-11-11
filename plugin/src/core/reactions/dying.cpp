@@ -32,6 +32,17 @@ namespace delirium
 			}
 			g_pinnedCount = static_cast<int>(g_pinned.size());
 		}
+
+		// the kill we make ourselves comes back through the kill hook on the same thread: let through. Per thread,
+		// Skyrim deals blows from its job threads too, several at once
+		thread_local const RE::Actor* t_ourKill = nullptr;
+
+		void Kill(RE::Actor* a_actor, RE::Actor* a_attacker, float a_damage, bool a_sendEvent, bool a_ragdollInstant)
+		{
+			t_ourKill = a_actor;
+			a_actor->KillImpl(a_attacker, a_damage, a_sendEvent, a_ragdollInstant);
+			t_ourKill = nullptr;
+		}
 	}
 
 	bool DeadOnFeet(const RE::Actor* a_actor)
@@ -50,7 +61,7 @@ namespace delirium
 
 	bool Engine::OnKill(RE::Actor* a_actor, RE::Actor* a_attacker, float a_damage, bool a_sendEvent, bool a_ragdollInstant)
 	{
-		if (!a_actor || a_actor == letKill_.load() || dyingTime_ <= 0.0f || !ready_ || a_actor->IsPlayerRef()) {
+		if (!a_actor || a_actor == t_ourKill || dyingTime_ <= 0.0f || !ready_ || a_actor->IsPlayerRef()) {
 			return false;
 		}
 		const auto id = a_actor->GetFormID();
@@ -141,11 +152,8 @@ namespace delirium
 
 	bool Engine::DieOnFeet(RE::Actor* a_actor, RE::Actor* a_attacker, float a_damage, bool a_sendEvent)
 	{
-		// a kill from another thread (a script's): Skyrim's own death, as it comes
-		auto* main = RE::Main::GetSingleton();
-		if (!main || main->threadID != ::GetCurrentThreadId()) {
-			return false;
-		}
+		// on the thread the blow came on (Skyrim's main thread or one of its job threads), where Skyrim's own kill
+		// would have run
 		const auto id = a_actor->GetFormID();
 		bool       pin = true;
 		{
@@ -183,9 +191,7 @@ namespace delirium
 			logger::info("{:08X}: killing blow ({:.0f} damage, by {:08X}): dies now{}", id, a_damage, a_attacker ? a_attacker->GetFormID() : 0,
 				pin ? fmt::format(", on her feet in Delirium (Skyrim's ragdoll pinned to her, up to {:.1f} s)", dyingTime_) : std::string(", as she is"));
 		}
-		letKill_ = a_actor;
-		a_actor->KillImpl(a_attacker, a_damage, a_sendEvent, true);  // instant ragdoll: no canned death animation
-		letKill_ = nullptr;
+		Kill(a_actor, a_attacker, a_damage, a_sendEvent, true);  // instant ragdoll: no canned death animation
 		if (!a_actor->IsDead()) {
 			logger::info("{:08X}: still alive after the kill? (essential, a script)", id);
 			std::scoped_lock l(lock_);
@@ -320,9 +326,7 @@ namespace delirium
 			heldDied_.insert(t->GetFormID());
 		}
 		const float s = std::chrono::duration<float>(std::chrono::steady_clock::now() - a_held.at).count();
-		letKill_ = t.get();
-		t->KillImpl(att.get(), a_held.damage, a_held.send, a_held.instant);
-		letKill_ = nullptr;
+		Kill(t.get(), att.get(), a_held.damage, a_held.send, a_held.instant);
 		logger::info("{:08X}: dies now ({}), {:.1f} s after the killing blow{}", t->GetFormID(), a_why, s, t->IsDead() ? "" : " (still alive?)");
 	}
 

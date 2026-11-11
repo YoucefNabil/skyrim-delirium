@@ -467,7 +467,6 @@ namespace delirium
 		std::unordered_map<RE::FormID, Held> held_;      // deaths held back (under lock_)
 		std::unordered_set<std::string>      ragdollDumps_;  // limit sets already written by DumpRagdoll
 		std::unordered_set<RE::FormID>       heldDied_;  // killed after a hold: her death ragdoll gets no new shot or push
-		std::atomic<RE::Actor*>              letKill_{ nullptr };  // the kill we make ourselves goes through
 		bool          aboutJoint_{ true };   // [Ragdoll] bTurnAboutJoint: a muscle turns the limb about its joint (the spin and the swing that goes with it)
 		bool          draugr_{ true }, skeletons_{ false }, falmer_{ false };  // [Creatures] bDraugr / bSkeletons / bFalmer: these creatures too (a person's bones)
 		// Skyrim's joints' own friction, by joint data (it may be shared between ragdolls): the original and how many hold it
