@@ -48,6 +48,7 @@ namespace delirium
 		f("Deaths.fDeathMaxSpeed", deathMaxSpeed_);
 		f("Deaths.fShotTime", dyingReact_);
 		f("Deaths.fDyingTime", dyingTime_);
+		b("Deaths.bDieAtOnce", dieAtOnce_);
 		f("Deaths.fCollapseAfterMin", collapseMin_);
 		f("Deaths.fCollapseAfterMax", collapseMax_);
 		f("Reactions.fHeavyOomph", heavyOomph_);
@@ -111,6 +112,8 @@ namespace delirium
 		f("Explosions.fFlyUp", flyUp_);
 		f("Explosions.fFlyMin", flyMin_);
 		f("Explosions.fFlyMax", flyMax_);
+		b("Falls.bHighFall", highFalls_);
+		f("Falls.fHighFallDrop", highFallDrop_);
 		f("Explosions.fHighFallAt", highFallAt_);
 		f("Explosions.fTumble", tumble_);
 		f("Down.fWritheTime", writheTime_);

@@ -83,7 +83,9 @@ namespace delirium
 
 	void HookUpdate3D(RE::Actor* a_actor);  // below, with AfterRootMove
 	void UnhookUpdate3D();
-	void HookArrows();  // below, with OnArrow
+	void HookArrows();  // below, with OnArrow (and the arrow/spell/swing handler gates)
+	bool HoldsCombat(const RE::Actor* a_actor);  // body/hold.cpp: held upright, her attacks and casts do nothing
+	bool DeadOnFeet(const RE::Actor* a_actor);   // reactions/dying.cpp: killed, still stumbling in Delirium (pinned)
 	void UnhookArrows();
 	void HookPresent();  // the render frame's end, for PublishShown
 	void UnhookPresent();

@@ -93,8 +93,9 @@ namespace delirium
 
 	bool Engine::TorqueMode(const Active& a) const
 	{
-		// F7: Delirium leads the first 0.15 s (the push is Delirium's), then follows
-		return a.ragdolled && (a.takeover || a.age - a.ragdollAge >= 0.15f);
+		// F7: Delirium leads the first 0.15 s (the push is Delirium's), then follows. Dead on her feet (pinned) it leads
+		// until she is down: Skyrim's ragdoll goes exactly where Delirium's stumble takes it
+		return a.ragdolled && !a.pinned && (a.takeover || a.age - a.ragdollAge >= 0.15f);
 	}
 
 	// which of Skyrim's bodies each Delirium part's drive lands on: the body it gives its rotation to, else its position,

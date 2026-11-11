@@ -78,8 +78,8 @@ namespace delirium
 
 			// [Creatures]
 			B("Creatures", "bDraugr", draugr_, true, Reactions, P, "Draugr", "Draugr react as people do (their body is fitted to their own bones). Off: Skyrim's own reactions"),
-			B("Creatures", "bSkeletons", skeletons_, false, Reactions, P, "Skeletons (very experimental)", "Very experimental. Skeletons react as people do (fitted to their own bones). Off: Skyrim's own reactions"),
-			B("Creatures", "bFalmer", falmer_, false, Reactions, P, "Falmer (very experimental)", "Very experimental. Falmer stand hunched, which Delirium can't balance yet: only blows that put them down (throws, knockdowns, killing blows) are Delirium's, the rest stays Skyrim's. Off: Skyrim's own reactions"),
+			B("Creatures", "bSkeletons", skeletons_, true, Reactions, P, "Skeletons (very experimental)", "Very experimental. Skeletons react as people do (fitted to their own bones). Off: Skyrim's own reactions"),
+			B("Creatures", "bFalmer", falmer_, true, Reactions, P, "Falmer (very experimental)", "Very experimental. Falmer stand hunched, which Delirium can't balance yet: only blows that put them down (throws, knockdowns, killing blows) are Delirium's, the rest stays Skyrim's. Off: Skyrim's own reactions"),
 
 			// [Arrows]
 			B("Arrows", "bShotReaction", arrows_, true, Reactions, P, "Arrows", "An arrow that hits a living NPC: Delirium's shot reaction (stumble, clutch the wound, catch their balance or fall)"),
@@ -94,13 +94,13 @@ namespace delirium
 			F("Spells", "fShockTime", shockTime_, 2.0, Min(0.0), Timing, P, "Shocked", "Seconds the NPC is shocked after a lightning hit"),
 			F("Spells", "fChannelLinger", channelLinger_, 0.6, Min(0.1), Timing, P, "Channel linger",
 				"Channelled spells (Flames, Frostbite, Sparks): their reaction lasts this long after the last hit, s"),
-			F("Spells", "fStartChance", spellChance_[0], 0.5, Range(0.0, 1.0), Difficulty, P, "Spell: chance at full health",
+			F("Spells", "fStartChance", spellChance_[0], 1.0, Range(0.0, 1.0), Difficulty, P, "Spell: chance at full health",
 				"Chance a spell's missile brings the NPC into Delirium at full health (in between by their health). Once in, every hit plays"),
-			F("Spells", "fStartChanceHurt", spellChance_[1], 0.8, Range(0.0, 1.0), Difficulty, P, "Spell: chance near death",
+			F("Spells", "fStartChanceHurt", spellChance_[1], 1.0, Range(0.0, 1.0), Difficulty, P, "Spell: chance near death",
 				"The same near death. A killing blow and a spell that staggers always do"),
-			F("Spells", "fChannelChance", channelChance_[0], 0.3, Range(0.0, 1.0), Difficulty, P, "Channel: chance at full health",
+			F("Spells", "fChannelChance", channelChance_[0], 1.0, Range(0.0, 1.0), Difficulty, P, "Channel: chance at full health",
 				"Chance per second of a channelled spell, at full health. Once in, every tick keeps the NPC in"),
-			F("Spells", "fChannelChanceHurt", channelChance_[1], 0.6, Range(0.0, 1.0), Difficulty, P, "Channel: chance near death", "The same near death"),
+			F("Spells", "fChannelChanceHurt", channelChance_[1], 1.0, Range(0.0, 1.0), Difficulty, P, "Channel: chance near death", "The same near death"),
 
 			// [Stagger]
 			B("Stagger", "bReplace", staggers_, true, Reactions, P, "Staggers",
@@ -169,6 +169,11 @@ namespace delirium
 			F("Explosions", "fHighFallAt", highFallAt_, 4.5, Min(0.0), Strength, P | D, "Thrown far from", "From this m/s the NPC is thrown far ('far' rows: Delirium's high fall)"),
 			F("Explosions", "fTumble", tumble_, 10.0, Min(0.0), Strength, P | D, "Tumble", "N s at the head per m/s thrown: the NPC tumbles head first"),
 
+			// [Falls]
+			B("Falls", "bHighFall", highFalls_, true, Reactions, P, "Ledge falls",
+				"An NPC who drops off a ledge falls in Delirium (arms out, legs ready, landing into a ragdoll and Skyrim's get-up). Skyrim's fall damage is unchanged"),
+			F("Falls", "fHighFallDrop", highFallDrop_, 3.0, Min(0.5), Strength, P | D, "Ledge fall from", "Metres of drop before the NPC's fall is Delirium's"),
+
 			// [Down]
 			F("Down", "fWritheTime", writheTime_, 1.0, Min(0.0), Timing, P, "Writhe", "Knocked down, the NPC writhes this many s + the next x oomph (half for a blow)"),
 			F("Down", "fWritheAdd", writheAdd_, 1.2, Min(0.0), Timing, P | D, "Writhe per oomph", "Extra s of writhing for a harder hit"),
@@ -202,6 +207,8 @@ namespace delirium
 			B("Deaths", "bNoKillCams", noKillCams_, true, Reactions, P | kRestart, "No kill cams", "Kill cams off"),
 			F("Deaths", "fDyingTime", dyingTime_, 3.0, Range(0.0, 10.0), Timing, P, "Dying standing",
 				"Seconds a killed NPC may die standing in Delirium before the death goes through (0 = die at once)"),
+			B("Deaths", "bDieAtOnce", dieAtOnce_, true, Reactions, P, "Die at once",
+				"The killing blow kills at once; she stumbles on as Skyrim's ragdoll held to Delirium's pose (off = kept alive at 1 health until she collapses)"),
 			Pair(F("Deaths", "fCollapseAfterMin", collapseMin_, 0.8, Range(0.0, 10.0), Timing, P, "Collapses after (min)", "Dying standing: s the NPC fights to stay up, at least"), "Collapses after (s)"),
 			F("Deaths", "fCollapseAfterMax", collapseMax_, 1.6, AtLeast(collapseMin_), Timing, P, "Collapses after (max)", "And at most"),
 			F("Deaths", "fDyingHealth", dyingHealth_, 70.0, Range(0.0, 99.0), Strength, P, "Killing blow health",

@@ -189,9 +189,16 @@ namespace delirium
 			// after F7's lead-in. Not the same as sky.linked (we know how the bodies sit on Delirium's parts).
 			bool                               ragdolled{};
 			bool                               takeover{};  // started from Skyrim's own ragdoll (not F7)
+			// upright: her AI held (no arrows, casts or swings, body/hold.cpp); Skyrim's own stagger when we took her and its time left
+			bool                               holding{}, skyStagger{};
+			float                              skyStaggerLeft{};
+			RE::Actor*                         heldActor{};  // as registered for the handler gates (compared, never read)
 			bool                               death{};     // a corpse: dies in Delirium, then fades over to Skyrim's ragdoll
 			bool                               writhe{}, writhing{}, relaxed{};  // the dying plan: writhe first or not, gone limp
 			bool                               heldDeath{};  // dying on her feet: her death is held back (OnKill)
+			bool                               pinned{};    // dead on her feet: Skyrim's ragdoll follows Delirium's pose exactly until she is down
+			float                              pinUntil{};  // age: pinned at most until then ([Deaths] fDyingTime)
+			RE::FormID                         pinId{};     // as registered for DeadOnFeet
 			float                              collapseAt{ -1.0f };  // age: dying on her feet, she stops fighting it and goes down
 			float                              relaxAt{};   // age: when the next dying step (writhe end / limp) comes
 			float                              dyingAt{ -1.0f };  // age: when she died (the shot plays before any writhe)
@@ -248,6 +255,7 @@ namespace delirium
 			int                                flying{};            // thrown: 1 in the air, 2 coming down (Fly)
 			float                              offBalance{};        // s her balance has been off (a behaviour restarting it is off for a moment: not a fall)
 			int                                flyMode{};           // 0 windmill + pedal, 1 rolled up, 2 highFall, 3 curled up kicking
+			bool                               ledgeFall{};         // flying off a ledge on her own (reactions/falls.cpp): landed by the ground under her
 			bool                               braced{};            // thrown at something: arms out at it
 			float                              braceCheckAt{};      // age of the next look ahead
 			float                              writheFor{};         // s she writhes once she is down (0: she doesn't)
@@ -359,6 +367,11 @@ namespace delirium
 			const char*                           why{ "" };
 		};
 		void DyingOnFeet(RE::Actor* a_actor);              // main thread, after her held killing blow: Delirium has her, wounded
+		bool DieOnFeet(RE::Actor* a_actor, RE::Actor* a_attacker, float a_damage, bool a_sendEvent);  // [Deaths] bDieAtOnce: killed now, stumbles pinned
+		void StumbleShot(RE::Actor* a_actor, RE::Actor* a_killer);  // main thread, after the kill: no reaction of her own came, a shot
+		void StartShot(Active& a, RE::Actor* a_actor, RE::Actor* a_killer);  // the killing blow as a wounded shot (no reaction of its own); under lock_
+		void Unpin(Active& a, const char* a_why);  // dead on her feet no more: Delirium follows Skyrim's ragdoll again; under lock_
+		bool Dying(const RE::Actor* a_actor) const;  // her death held back, or dead on her feet: the killing blow plays as dying; under lock_
 		void CheckHeld(RE::Actor* a_actor);                // every animation update: her time up (or down): she dies
 		void KillHeld(const char* a_why);                  // main thread: every held death now
 		void KillNow(const Held& a_held, const char* a_why);  // main thread: Skyrim's kill, with the killer and blow it had
@@ -375,6 +388,8 @@ namespace delirium
 		void StopChill(Active& a);
 		// a channelled spell (Flames, Frostbite, Sparks): no shot, only the element's reaction while it keeps hitting
 		void Channel(Active& a, RE::Actor* a_actor, const RE::NiPoint3& a_vel, int a_kind);
+		void WatchFall(RE::Actor* a_actor);         // reactions/falls.cpp: every NPC not in Delirium, each frame
+		bool LedgeLanded(const Active& a) const;    // her own drop is over
 		int  NearestPart(const Active& a, const float* a_at) const;  // the part closest to a point (Delirium's frame)
 		float BodyVelocities(const Active& a, std::array<V3, 21>& v, std::array<V3, 21>& w, std::array<bool, 21>& have) const;
 		void  SyncFromSkyrim(Active& a);
@@ -383,7 +398,10 @@ namespace delirium
 		void  MapParts(Active& a);
 		void  ApplyTorques(Active& a, float a_dt);
 		void  PartsFromBodies(const Active& a, std::array<V3, 21>& pos, std::array<Q, 21>& rot) const;
-		float PartsFromBones(const Active& a, std::array<V3, 21>& pos, std::array<Q, 21>& rot, std::string* detail) const;
+		// a_previous: from the bones as drawn last frame (previousWorld), for the speed she moved at
+		float PartsFromBones(const Active& a, std::array<V3, 21>& pos, std::array<Q, 21>& rot, std::string* detail, bool a_previous = false) const;
+		// upright entry: each part's speed from her animation (now against last frame), so she goes in moving as she moved
+		void PartSpeeds(const Active& a, const std::array<V3, 21>& pos, const std::array<Q, 21>& rot, std::array<V3, 21>& v, std::array<V3, 21>& w) const;
 		void  SetZeroPose(Active& a, const std::array<V3, 21>& pos, const std::array<Q, 21>& rot);
 		void WriteBones(Active& a_act);
 		// body/show.cpp: her meshes read the finished pose (Active::shown), not the bones while they are written
@@ -402,6 +420,8 @@ namespace delirium
 		bool DeliriumBone(const Active& a, const BodyLink& l, V3& a_pos, Q& a_rot) const;  // havok world
 		void BodyTarget(const Active& a, const BodyLink& l, V3& a_pos, Q& a_rot) const;
 		void FollowActor(Active& a, RE::Actor* a_actor);
+		void HoldCombat(Active& a, RE::Actor* a_actor, float a_dt);  // body/hold.cpp: every upright frame
+		void FreeCombat(Active& a);                                  // going down, or let go
 
 		std::recursive_mutex                  lock_;  // recursive: Skyrim may call a hooked function from inside one of ours
 		std::vector<std::unique_ptr<Active>>  active_;
@@ -441,6 +461,7 @@ namespace delirium
 		float         dyingReact_{ 1.2f };    // [Deaths] fShotTime: s the dying shot plays before a writhe
 		float         collapseMin_{ 0.8f }, collapseMax_{ 1.6f };  // [Deaths] fCollapseAfterMin/Max: s she fights to stay up, dying
 		float         dyingTime_{ 3.0f };
+		bool          dieAtOnce_{ true };  // [Deaths] bDieAtOnce: the killing blow kills; she stumbles as a ragdoll pinned to Delirium
 		std::unordered_map<std::string, Rule> rules_;  // [Reactions], over the built-in table
 		float         heavyOomph_{ 0.5f };  // [Reactions] fHeavyOomph: from this oomph a blow is heavy
 		std::unordered_map<RE::FormID, Held> held_;      // deaths held back (under lock_)
@@ -494,6 +515,9 @@ namespace delirium
 		float         blastFar_{ 0.4f };        // [Explosions] fFarShare: the push's share at its edge
 		float         blastUp_{ 0.25f };        // [Explosions] fUp: the push's upward part (0 flat, 1 straight up)
 		float         flySpeed_{ 3.0f };        // [Explosions] fFlySpeed: m/s she is thrown at, at the centre for fDamageRef damage
+		bool          highFalls_{ true };       // [Falls] bHighFall: an NPC dropping off a ledge falls in Delirium
+		float         highFallDrop_{ 3.0f };    // [Falls] fHighFallDrop: from this many m of drop
+		std::vector<RE::FormID> noFallBody_;    // NPCs a ledge fall couldn't take (no body for the skeleton)
 		float         highFallAt_{ 4.5f };      // [Explosions] fHighFallAt: from this m/s she is thrown far: Delirium's highFall
 		float         tumble_{ 10.0f };         // [Explosions] fTumble: N s at the head per m/s thrown: she tumbles
 		float         writheTime_{ 1.0f }, writheAdd_{ 1.2f };  // [Down] fWritheTime + fWritheAdd x oomph: s she writhes on the ground

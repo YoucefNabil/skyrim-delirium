@@ -49,7 +49,7 @@ namespace delirium
 				}
 				return;  // Skyrim's own ragdoll, not ours (its get-up, paralysis)
 			}
-			if (a_blow.startChance < 1.0f && !held_.contains(a_target->GetFormID())) {
+			if (a_blow.startChance < 1.0f && !Dying(a_target)) {
 				if (Rand(0.0f, 1.0f) >= a_blow.startChance) {
 					logger::info("{:08X}: {} doesn't bring her in ({:.0f} % chance): Skyrim's own hit", a_target->GetFormID(), a_blow.what, a_blow.startChance * 100.0f);
 					return;
@@ -59,7 +59,7 @@ namespace delirium
 			// a falmer can't keep her feet in Delirium (its balance is a person's): only a blow that puts her down brings
 			// her in (thrown, a knockdown, a killing blow); the rest is Skyrim's own stagger
 			if (Hunched(a_target)) {
-				const bool  held = held_.contains(a_target->GetFormID());
+				const bool  held = Dying(a_target);
 				std::string key;
 				const Rule& rule = PickRule("stand", a_blow, held, key);
 				const bool  thrown = rule.Has("throw") && rule.Value("throw", 6.0f) > 0.0f && (a_blow.type != kBlowShout || a_blow.knocks);
@@ -104,7 +104,7 @@ namespace delirium
 		}
 		if (a.flying > 0 && (!a.knockQueued || a.takeover)) {
 			// in the air: the throw's behaviours play on, the blow only adds its push (a killing blow too: she dies once down)
-			if (held_.contains(a_actor->GetFormID())) {
+			if (Dying(a_actor)) {
 				a.heldDeath = true;
 			}
 			const float added = AddPush(a, at, b.dir, std::min(b.push, b.melee ? meleeMaxPush_ : hitMaxPush_));
@@ -127,7 +127,7 @@ namespace delirium
 		int         r;
 		// a projectile, or a blow past a flinch: Delirium's shot task, wounded where it landed and along it, fighting to
 		// stay on her feet (a blow as GTA's melee set)
-		const bool held = held_.contains(a_actor->GetFormID());  // the killing blow, held back: she dies on her feet
+		const bool held = Dying(a_actor);  // the killing blow, held back: she dies on her feet
 		if (held) {
 			a.heldDeath = true;
 			if (a.collapseAt < 0.0f) {

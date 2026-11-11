@@ -43,8 +43,9 @@ add_library(SkyrimDeliriumCore SHARED
 	src/core/core.cpp src/core/engine.cpp src/core/hooks.cpp src/core/settings/table.cpp src/core/settings/load.cpp
 	src/core/settings/live.cpp src/core/settings/save.cpp src/core/menu/menu.cpp src/core/menu/reactions.cpp
 	src/core/reactions/hits.cpp src/core/reactions/rules.cpp src/core/reactions/react.cpp src/core/reactions/dying.cpp src/core/reactions/bodies.cpp
+	src/core/reactions/falls.cpp
 	src/core/body/takeover.cpp src/core/body/update.cpp src/core/body/calibrate.cpp src/core/body/drive.cpp src/core/body/skyrim_body.cpp
-	src/core/body/collision.cpp src/core/body/show.cpp src/core/body/fit.cpp src/core/body/world.cpp
+	src/core/body/collision.cpp src/core/body/show.cpp src/core/body/fit.cpp src/core/body/world.cpp src/core/body/hold.cpp
 	src/core/debug/commands.cpp src/core/debug/trace.cpp src/core/debug/settings_dump.cpp src/core/debug/throw.cpp)
 # offline settings check (tools\check-settings.ps1): built only when asked for
 add_executable(SettingsCheck EXCLUDE_FROM_ALL tests/settings_check.cpp

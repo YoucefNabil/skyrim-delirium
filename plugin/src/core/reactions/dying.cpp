@@ -1,4 +1,14 @@
-// Deaths: the killing blow held on her feet, dying in Delirium, the corpse going limp.
+// Deaths: the killing blow, dying on her feet in Delirium, the corpse going limp.
+//
+// What Skyrim does with a kill (KillImpl, read in IDA): AI off, death events, then either the ragdoll at once
+// ("instant ragdoll") or first a canned death animation if her behaviour graph has one for the moment; once a ragdoll
+// it is pushed by the killing hit (stored on her process), else carries her movement, else gets a nudge forward.
+//
+// [Deaths] bDieAtOnce (the default): the killing blow kills now, with the instant ragdoll (no canned animation can fight
+// the pose). Delirium has her on her feet and plays the stumble; Skyrim's ragdoll is pinned to Delirium's pose (the
+// lead drive, body/drive.cpp, kept on: each step every body gets the velocity that lands it on Delirium's pose) until
+// she is down, then she dies in Delirium as she lies (update.cpp). Off: the old way, her death held back at 1 health
+// until she collapses (held_).
 #include "shared.h"
 
 namespace delirium
@@ -7,6 +17,35 @@ namespace delirium
 	{
 		constexpr std::array<int, 6> kUpperParts{ 8, 9, 10, 11, 13, 17 };  // spine1-3, neck, clavicles: where a killing blow lands
 		constexpr float              kHeldHealth = 150.0f;  // the killing blow on her feet: the shot task's "stays up, fights it" health
+
+		// who is dead on her feet: read by Eligible and the hit code outside lock_
+		std::mutex              g_pinLock;
+		std::vector<RE::FormID> g_pinned;
+		std::atomic<int>        g_pinnedCount{ 0 };
+
+		void SetPinned(RE::FormID a_id, bool a_on)
+		{
+			std::scoped_lock l(g_pinLock);
+			std::erase(g_pinned, a_id);
+			if (a_on) {
+				g_pinned.push_back(a_id);
+			}
+			g_pinnedCount = static_cast<int>(g_pinned.size());
+		}
+	}
+
+	bool DeadOnFeet(const RE::Actor* a_actor)
+	{
+		if (!a_actor || g_pinnedCount.load(std::memory_order_relaxed) == 0) {
+			return false;
+		}
+		std::scoped_lock l(g_pinLock);
+		return std::ranges::find(g_pinned, a_actor->GetFormID()) != g_pinned.end();
+	}
+
+	bool Engine::Dying(const RE::Actor* a_actor) const
+	{
+		return held_.contains(a_actor->GetFormID()) || DeadOnFeet(a_actor);
 	}
 
 	bool Engine::OnKill(RE::Actor* a_actor, RE::Actor* a_attacker, float a_damage, bool a_sendEvent, bool a_ragdollInstant)
@@ -14,8 +53,18 @@ namespace delirium
 		if (!a_actor || a_actor == letKill_.load() || dyingTime_ <= 0.0f || !ready_ || a_actor->IsPlayerRef()) {
 			return false;
 		}
-		std::scoped_lock l(lock_);
 		const auto id = a_actor->GetFormID();
+		if (dieAtOnce_) {
+			bool held;
+			{
+				std::scoped_lock l(lock_);
+				held = held_.contains(id);  // held the old way before the setting changed: ends the old way
+			}
+			if (!held) {
+				return DieOnFeet(a_actor, a_attacker, a_damage, a_sendEvent);  // kills outside lock_, as KillNow does
+			}
+		}
+		std::scoped_lock l(lock_);
 		const auto it = held_.find(id);
 		if (it == held_.end()) {
 			// people on their feet only: one already in a ragdoll (knocked down, paralysed) dies as she lies
@@ -86,11 +135,97 @@ namespace delirium
 		}
 		act->heldDeath = true;
 		// no reaction from a blow (a burn, a fall, the console): the killing blow as a wounded shot, from the killer
+		auto k = it->second.attacker.get();
+		StartShot(*act, a_actor, k.get());
+	}
+
+	bool Engine::DieOnFeet(RE::Actor* a_actor, RE::Actor* a_attacker, float a_damage, bool a_sendEvent)
+	{
+		// a kill from another thread (a script's): Skyrim's own death, as it comes
+		auto* main = RE::Main::GetSingleton();
+		if (!main || main->threadID != ::GetCurrentThreadId()) {
+			return false;
+		}
+		const auto id = a_actor->GetFormID();
+		bool       pin = true;
+		{
+			std::scoped_lock l(lock_);
+			Active* act = nullptr;
+			for (auto& p : active_) {
+				if (p->actor.get().get() == a_actor) {
+					act = p.get();
+				}
+			}
+			if (act) {
+				// down, thrown or dying already: she dies as it plays (update.cpp), only without a canned death animation
+				pin = !(act->knockQueued || act->death || act->flying > 0 || act->takeover || act->pinned);
+			} else {
+				// people on their feet only: one already in a ragdoll (knocked down, paralysed) dies as she lies
+				if (!Eligible(a_actor, "killing blow", false)) {
+					return false;
+				}
+				if (a_actor->IsInRagdollState() || a_actor->IsInKillMove()) {
+					logger::info("{:08X}: killing blow in a ragdoll or killmove: dies at once", id);
+					return false;
+				}
+				if (!Activate(a_actor, false)) {
+					logger::info("{:08X}: killing blow: Delirium can't take her, Skyrim's own death", id);
+					return false;
+				}
+				act = active_.back().get();
+			}
+			if (pin) {
+				act->pinned = true;
+				act->pinUntil = act->age + dyingTime_;
+				act->pinId = id;
+				SetPinned(id, true);
+			}
+			logger::info("{:08X}: killing blow ({:.0f} damage, by {:08X}): dies now{}", id, a_damage, a_attacker ? a_attacker->GetFormID() : 0,
+				pin ? fmt::format(", on her feet in Delirium (Skyrim's ragdoll pinned to her, up to {:.1f} s)", dyingTime_) : std::string(", as she is"));
+		}
+		letKill_ = a_actor;
+		a_actor->KillImpl(a_attacker, a_damage, a_sendEvent, true);  // instant ragdoll: no canned death animation
+		letKill_ = nullptr;
+		if (!a_actor->IsDead()) {
+			logger::info("{:08X}: still alive after the kill? (essential, a script)", id);
+			std::scoped_lock l(lock_);
+			for (auto& p : active_) {
+				if (p->actor.get().get() == a_actor) {
+					Unpin(*p, "not dead");
+				}
+			}
+			return true;
+		}
+		if (pin) {
+			// the blow's own reaction comes after the kill (React, as dying); none (a burn, a fall, the console): a shot
+			g_tasks->AddTask([h = a_actor->GetHandle(), k = a_attacker ? a_attacker->GetHandle() : RE::ActorHandle{}]() {
+				if (auto t = h.get()) {
+					auto killer = k.get();
+					Engine::Get().StumbleShot(t.get(), killer.get());
+				}
+			});
+		}
+		return true;
+	}
+
+	void Engine::StumbleShot(RE::Actor* a_actor, RE::Actor* a_killer)
+	{
+		std::scoped_lock l(lock_);
+		for (auto& p : active_) {
+			if (p->actor.get().get() == a_actor && p->pinned && !p->heldDeath) {
+				p->heldDeath = true;
+				StartShot(*p, a_actor, a_killer);
+			}
+		}
+	}
+
+	void Engine::StartShot(Active& a, RE::Actor* a_actor, RE::Actor* a_killer)
+	{
 		float cp[3]{}, cq[4]{};
-		dl.nm_agent_get_part_transform(act->agent, kChest, cp, cq);
+		dl.nm_agent_get_part_transform(a.agent, kChest, cp, cq);
 		V3 dir{};
-		if (auto k = it->second.attacker.get()) {
-			const RE::NiPoint3 kp = (k->GetPosition() - act->origin) * kUnit;
+		if (a_killer) {
+			const RE::NiPoint3 kp = (a_killer->GetPosition() - a.origin) * kUnit;
 			dir = { cp[0] - kp.x, cp[1] - kp.y, 0.0f };
 		}
 		if (dir.x * dir.x + dir.y * dir.y < 1e-4f) {
@@ -101,16 +236,27 @@ namespace delirium
 		const float d[3]{ dir.x / ln, dir.y / ln, 0.0f };
 		const int   part = kUpperParts[std::uniform_int_distribution<int>(0, 5)(g_rng)];
 		float       hp[3]{}, hq[4]{};
-		dl.nm_agent_get_part_transform(act->agent, part, hp, hq);
+		dl.nm_agent_get_part_transform(a.agent, part, hp, hq);
 		std::string key;
 		const Rule* row = FindRule({ "stand.lethal" }, key);
 		const bool  collapse = !row || row->Has("collapse");
-		if (dl.nm_agent_task_shot(act->agent, act->world, nullptr, part, hp, d, row ? row->Value("shot", kHeldHealth) : kHeldHealth) < 0) {
+		if (dl.nm_agent_task_shot(a.agent, a.world, nullptr, part, hp, d, row ? row->Value("shot", kHeldHealth) : kHeldHealth) < 0) {
 			logger::error("  shot task: {}", LastError());
 		} else {
-			act->collapseAt = collapse ? act->age + Rand(collapseMin_, collapseMax_) : -1.0f;
-			logger::info("{:08X}: dying on her feet: shot task on part {}, collapsing in {:.1f} s", a_actor->GetFormID(), part, act->collapseAt - act->age);
+			a.collapseAt = collapse ? a.age + Rand(collapseMin_, collapseMax_) : -1.0f;
+			logger::info("{:08X}: dying on her feet: shot task on part {}, collapsing in {:.1f} s", a_actor->GetFormID(), part, a.collapseAt - a.age);
 		}
+	}
+
+	void Engine::Unpin(Active& a, const char* a_why)
+	{
+		if (!a.pinned) {
+			return;
+		}
+		a.pinned = false;
+		SetPinned(a.pinId, false);
+		logger::info("{:08X}: dead on her feet no more ({}), {:.1f} s pinned: Delirium follows Skyrim's ragdoll", a.pinId, a_why,
+			a.age - (a.pinUntil - dyingTime_));
 	}
 
 	void Engine::CheckHeld(RE::Actor* a_actor)

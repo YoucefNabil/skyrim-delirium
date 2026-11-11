@@ -60,7 +60,7 @@ namespace delirium
 			return false;
 		}
 		std::scoped_lock l(lock_);
-		return std::ranges::any_of(active_, [&](const auto& a) { return a->actor.get().get() == a_actor && !a->knockQueued && !a->ragdolled; });
+		return std::ranges::any_of(active_, [&](const auto& a) { return a->actor.get().get() == a_actor && !a->knockQueued && (!a->ragdolled || a->pinned); });
 	}
 
 	void Engine::Others(RE::Actor* a_actor, bool a_upright)
@@ -81,7 +81,7 @@ namespace delirium
 				if (!t || t.get() == a_actor || !t->Get3D(false) || t->IsDisabled() || t->GetPosition().GetDistance(a_actor->GetPosition()) > kNear) {
 					continue;
 				}
-				const float body = t->IsDead() || t->IsInRagdollState() ? 0.0f : 1.0f;
+				const float body = (t->IsDead() || t->IsInRagdollState()) && !DeadOnFeet(t.get()) ? 0.0f : 1.0f;
 				for (const auto& c : world::Capsules(t.get())) {
 					put(c, body);
 				}
@@ -105,7 +105,7 @@ namespace delirium
 			if (a.actor.get().get() != a_actor) {
 				continue;
 			}
-			if (a.knockQueued || a.ragdolled) {
+			if (a.knockQueued || (a.ragdolled && !a.pinned)) {
 				caps.clear();  // she went down since
 			}
 			// into her physics frame (metres from her origin), and none deeper than kMostOverlap inside her as she is now
@@ -156,7 +156,7 @@ namespace delirium
 		if (!ready_ || a_actor->IsPlayerRef()) {
 			return;
 		}
-		const bool down = a_actor->IsInRagdollState();
+		const bool down = a_actor->IsInRagdollState() && !upright;  // dead on her feet: Skyrim's ragdoll, but Delirium has her up
 		if (down || upright) {
 			Strikes(a_actor, down);
 		}

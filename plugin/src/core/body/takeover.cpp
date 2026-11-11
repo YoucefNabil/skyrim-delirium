@@ -134,10 +134,18 @@ namespace delirium
 			}
 		}
 		dl.nm_agent_set_mode(act->agent, NM_MODE_LEAD);
+		// on her feet she goes in moving as her animation moved her (running, swinging, falling): no stop dead. Taken
+		// over from Skyrim's ragdoll its bodies' own speeds come in later (InheritVelocity)
+		std::array<V3, 21> pv{}, pw{};
+		if (!a_takeover) {
+			PartSpeeds(*act, pos, rot, pv, pw);
+		}
 		for (int i = 0; i < 21; ++i) {
 			const float p[3]{ pos[i].x, pos[i].y, pos[i].z }, q[4]{ rot[i].x, rot[i].y, rot[i].z, rot[i].w };
-			dl.nm_agent_set_part_state(act->agent, i, p, q, zero, zero);
+			const float lv[3]{ pv[i].x, pv[i].y, pv[i].z }, av[3]{ pw[i].x, pw[i].y, pw[i].z };
+			dl.nm_agent_set_part_state(act->agent, i, p, q, lv, av);
 		}
+		logger::info("  went in moving: pelvis {:.2f} {:.2f} {:.2f} m/s", pv[0].x, pv[0].y, pv[0].z);
 		// the posture the muscles and balance hold: the NPC's own pose, not the GTA character's stance (standing: her
 		// legs from the body's own stance, see StandingLegs)
 		{
@@ -205,17 +213,18 @@ namespace delirium
 		}
 	}
 
-	float Engine::PartsFromBones(const Active& a, std::array<V3, 21>& pos, std::array<Q, 21>& rot, std::string* detail) const
+	float Engine::PartsFromBones(const Active& a, std::array<V3, 21>& pos, std::array<Q, 21>& rot, std::string* detail, bool a_previous) const
 	{
 		// parts from the bones as Skyrim posed them: rotations through the rig, positions down the chain from the pelvis.
 		// Returns the worst gap between a physics joint and its Skyrim bone (calibration check).
+		auto frame = [&](RE::NiAVObject* n) -> const RE::NiTransform& { return a_previous ? n->previousWorld : n->world; };
 		auto rel = [&](RE::NiAVObject* n) {
-			const auto w = (n->world.translate - a.origin) * kUnit;
+			const auto w = (frame(n).translate - a.origin) * kUnit;
 			return V3{ w.x, w.y, w.z };
 		};
 		float worst = 0;
 		for (std::size_t i = 0; i < 21; ++i) {
-			rot[i] = Mul(FromMat(a.ref[i]->world.rotate), Conj(rig_[i].offset));
+			rot[i] = Mul(FromMat(frame(a.ref[i]).rotate), Conj(rig_[i].offset));
 			const V3 anchor = a.anchor[i];  // at her size (body/fit.cpp)
 			if (i == 0) {
 				pos[0] = Sub(rel(a.ja[0]), Rot(rot[0], anchor));
@@ -233,6 +242,44 @@ namespace delirium
 			}
 		}
 		return worst;
+	}
+
+	void Engine::PartSpeeds(const Active& a, const std::array<V3, 21>& pos, const std::array<Q, 21>& rot, std::array<V3, 21>& v, std::array<V3, 21>& w) const
+	{
+		v.fill({});
+		w.fill({});
+		const float dt = RE::GetSecondsSinceLastFrame();
+		if (!(dt > 1e-3f && dt < 0.1f)) {
+			return;
+		}
+		std::array<V3, 21> pp;
+		std::array<Q, 21>  pr;
+		PartsFromBones(a, pp, pr, nullptr, true);
+		// a teleport, a fresh 3D (last frame is the origin or junk), or no speed at all: still, as before
+		const V3    d0 = Sub(pos[0], pp[0]);
+		const float jump = std::sqrt(d0.x * d0.x + d0.y * d0.y + d0.z * d0.z);
+		if (!std::isfinite(jump) || jump > 0.5f) {
+			return;
+		}
+		constexpr float kMaxV = 12.0f, kMaxW = 25.0f;  // m/s, rad/s: a sprint and a fast swing, no more
+		for (std::size_t i = 0; i < 21; ++i) {
+			V3 lv = Scl(Sub(pos[i], pp[i]), 1.0f / dt);
+			Q  dq = Mul(rot[i], Conj(pr[i]));  // last frame's turn to this frame's, in the world
+			if (dq.w < 0.0f) {
+				dq = { -dq.x, -dq.y, -dq.z, -dq.w };
+			}
+			const float s = std::sqrt(dq.x * dq.x + dq.y * dq.y + dq.z * dq.z);
+			const float ang = 2.0f * std::atan2(s, dq.w);
+			V3 av = s > 1e-6f ? Scl({ dq.x, dq.y, dq.z }, ang / (s * dt)) : V3{};
+			const float lvn = std::sqrt(lv.x * lv.x + lv.y * lv.y + lv.z * lv.z), avn = std::sqrt(av.x * av.x + av.y * av.y + av.z * av.z);
+			if (!std::isfinite(lvn + avn)) {
+				v.fill({});
+				w.fill({});
+				return;
+			}
+			v[i] = lvn > kMaxV ? Scl(lv, kMaxV / lvn) : lv;
+			w[i] = avn > kMaxW ? Scl(av, kMaxW / avn) : av;
+		}
 	}
 
 	// [Test] bStandingLegs: while she stands the hips, knees and ankles hold the body's own stance, soles level, under
@@ -278,6 +325,8 @@ namespace delirium
 		auto& a = active_[a_i];
 		logger::info("released ({}) after {:.1} s", a_why, a->age);
 		Unshow(*a);  // her meshes read her bones again (body/show.cpp)
+		FreeCombat(*a);
+		Unpin(*a, "let go");
 		RestoreJoints(*a);
 		for (std::size_t k = 0; k < a->sky.weighed.size(); ++k) {
 			if (auto* body = a->sky.weighed[k]) {

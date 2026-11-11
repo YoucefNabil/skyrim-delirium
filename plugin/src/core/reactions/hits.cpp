@@ -6,7 +6,7 @@ namespace delirium
 {
 	bool Engine::Eligible(RE::Actor* a_target, const char* a_what, bool a_quiet) const
 	{
-		if (!ready_ || !a_target || a_target->IsPlayerRef() || a_target->IsDead() || a_target->IsDisabled() || !a_target->Get3D(false)) {
+		if (!ready_ || !a_target || a_target->IsPlayerRef() || (a_target->IsDead() && !DeadOnFeet(a_target)) || a_target->IsDisabled() || !a_target->Get3D(false)) {
 			if (!a_quiet) {
 				logger::info("{}: skipped (off, dead, disabled or no 3D)", a_what);
 			}
@@ -80,7 +80,7 @@ namespace delirium
 			}
 			// not in Delirium yet: each second of channel brings her in by chance (then every tick keeps her in, above).
 			// Ticks come ~0.15 s apart: the chance for the time since the last one (a fresh channel counts as one tick)
-			if (!a_sure && !held_.contains(a_target->GetFormID())) {
+			if (!a_sure && !Dying(a_target)) {
 				const auto  now = std::chrono::steady_clock::now();
 				const auto  it = channelTick_.find(a_target->GetFormID());
 				const float dt = it == channelTick_.end() ? 0.15f :
@@ -333,12 +333,16 @@ namespace delirium
 
 	void Engine::OnStagger(RE::Actor* a_target, float a_magnitude, RE::Actor* a_source, bool a_started)
 	{
-		if (!ready_ || !staggers_ || !a_started || a_target->IsPlayerRef()) {
+		// held upright her stagger flag is ours, so Skyrim's stagger returns at once and never "starts": Delirium plays it
+		const bool held = !a_started && a_magnitude > 0.0f && HoldsCombat(a_target);
+		if (!ready_ || !staggers_ || (!a_started && !held) || a_target->IsPlayerRef()) {
 			return;
 		}
-		// what Skyrim staggered with: after its perks and its cap of 1
+		// what Skyrim staggered with: after its perks and its cap of 1 (held: its graph never got this one)
 		float mag = std::clamp(a_magnitude, 0.0f, 1.0f);
-		a_target->GetGraphVariableFloat("staggerMagnitude", mag);
+		if (!held) {
+			a_target->GetGraphVariableFloat("staggerMagnitude", mag);
+		}
 		// a frame later: a spell's or shout's hit event comes after its stagger, and with it who cast it
 		g_tasks->AddTask([h = a_target->GetHandle(), s = a_source ? a_source->GetHandle() : RE::ActorHandle{}, mag]() {
 			if (auto t = h.get()) {

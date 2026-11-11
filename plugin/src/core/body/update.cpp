@@ -237,6 +237,9 @@ namespace delirium
 		if (g_held.load(std::memory_order_relaxed) != 0) {
 			CheckHeld(a_actor);
 		}
+		if (highFalls_ && ready_) {
+			WatchFall(a_actor);  // returns at once unless she is in the air (it skips NPCs Delirium has)
+		}
 		if (g_count.load(std::memory_order_relaxed) == 0) {
 			return;
 		}
@@ -267,7 +270,7 @@ namespace delirium
 				a.blend = 1.0f;
 				a.blendingOut = false;
 				a.settled = 0.0f;
-				const bool held = a.heldDeath || heldDied_.contains(a_actor->GetFormID());
+				const bool held = a.heldDeath || a.pinned || heldDied_.contains(a_actor->GetFormID());
 				heldDied_.erase(a_actor->GetFormID());
 				if (!held) {
 					dl.nm_msg_begin(a.agent, "stopAllBehaviours");
@@ -276,8 +279,10 @@ namespace delirium
 				float cp[3]{}, cv[3]{};
 				dl.nm_agent_get_com(a.agent, cp, cv);
 				logger::info("{:08X}: died while Delirium has her ({}{}): dying in Delirium", a_actor->GetFormID(),
-					a.ragdolled ? "in Skyrim's ragdoll" : "on her feet", held ? ", after dying on her feet" : "");
-				StartDying(a, { cv[0], cv[1], 0.0f }, held);
+					a.ragdolled ? "in Skyrim's ragdoll" : "on her feet", a.pinned ? ", dead on her feet: pinned until she is down" : held ? ", after dying on her feet" : "");
+				if (!a.pinned) {
+					StartDying(a, { cv[0], cv[1], 0.0f }, held);  // pinned: once she is down (below)
+				}
 			}
 			const float dt = std::clamp(a_delta, 0.0f, 0.1f);
 			++a.calls;
@@ -515,9 +520,9 @@ namespace delirium
 				StopChill(a);
 				logger::info("{:08X}: warm again", a_actor->GetFormID());
 			}
-			if (a.heldDeath && !a.death && a.collapseAt >= 0.0f && a.age >= a.collapseAt) {
+			if (a.heldDeath && (!a.death || a.pinned) && a.collapseAt >= 0.0f && a.age >= a.collapseAt) {
 				a.collapseAt = -1.0f;
-				if (!a.knockQueued && a.flying == 0) {
+				if ((a.pinned || !a.knockQueued) && a.flying == 0) {
 					// she stops fighting it: the strength leaves her over a second or two, she goes down (and dies there)
 					dl.nm_msg_begin(a.agent, "stayUpright");
 					dl.nm_msg_set_bool(a.agent, "start", 0);
@@ -529,7 +534,7 @@ namespace delirium
 					logger::info("{:08X}: dying on her feet: collapsing over {:.1f} s", a_actor->GetFormID(), period);
 				}
 			}
-			if (a.death && a.ragdolled && !a.relaxed) {
+			if (a.death && a.ragdolled && !a.relaxed && !a.pinned) {
 				if (a.writhe && !a.writhing && ((fallen && a.age - a.dyingAt >= dyingReact_) || a.age >= a.relaxAt)) {
 					a.writhing = true;
 					dl.nm_msg_begin(a.agent, "stopAllBehaviours");
@@ -571,7 +576,7 @@ namespace delirium
 			if (a.flying > 0 && (!a.knockQueued || a.takeover)) {
 				float hp[3]{}, hq[4]{};
 				dl.nm_agent_get_part_transform(a.agent, kHead, hp, hq);
-				landed = (a.flying == 2 && a.age - a.flyAt > 0.5f && hp[2] < 0.6f) || a.age - a.flyAt > 3.0f;
+				landed = a.ledgeFall ? LedgeLanded(a) : (a.flying == 2 && a.age - a.flyAt > 0.5f && hp[2] < 0.6f) || a.age - a.flyAt > 3.0f;
 				if (landed) {
 					logger::info("{:08X}: landed after {:.2f} s (head at {:.2f} m)", a_actor->GetFormID(), a.age - a.flyAt, hp[2]);
 					if (a.knockQueued) {
@@ -588,12 +593,26 @@ namespace delirium
 			// on her feet still (the flag can come on the moment a hard hit lands): only once her head is going down
 			float hd[3]{}, hdq[4]{};
 			dl.nm_agent_get_part_transform(a.agent, kHead, hd, hdq);
+			if (a.pinned) {
+				// dead on her feet: down (as Delirium calls it upright, below), or her time is up: Delirium follows Skyrim's
+				// ragdoll from here, and she dies in Delirium as she lies (the dying plan after a held death)
+				const bool down = (fallen || a.offBalance > 0.25f) && hd[2] < 1.0f;
+				if (down || a.age >= a.pinUntil) {
+					Unpin(a, down ? "she is down" : "her time is up");
+					if (a.death) {
+						float cp[3]{}, cv[3]{};
+						dl.nm_agent_get_com(a.agent, cp, cv);
+						StartDying(a, { cv[0], cv[1], 0.0f }, true);
+					}
+				}
+			}
 			if (!a.knockQueued && (a.flying > 0 ? landed : ((fallen || a.offBalance > 0.25f) && hd[2] < 1.0f))) {
 				logger::info("{:08X}: down after {:.2f} s: {}", a_actor->GetFormID(), a.age,
 					a.flying > 0 ? "landed" : fallen ? "Delirium says she fell" : "balance lost for 0.25 s");
 				// balance lost: hand the actor to Skyrim's own ragdoll state now, while our pose is still close to the
 				// animation Skyrim builds its ragdoll from (no push of its own); DriveRagdoll makes it follow Delirium
 				a.knockQueued = true;
+				FreeCombat(a);  // her flag off before Skyrim's knock reads it
 				if (a.writheFor > 0.0f && !a.death) {
 					a.writheAt = a.age + (a.flying > 0 ? 0.3f : 0.7f);
 				}
@@ -624,6 +643,7 @@ namespace delirium
 				});
 			} else if (!a.knockQueued) {
 				FollowActor(a, a_actor);
+				HoldCombat(a, a_actor, dt);
 			}
 			if (a.knockQueued && static_cast<int>(a.age) != static_cast<int>(a.age - dt)) {
 				logger::info("  ragdoll: knock state {}, in state {}, {} bodies, {} drives, fastest steer {:.1f} m/s, top node lag up to {:.2f} rad",
@@ -662,9 +682,9 @@ namespace delirium
 			// lying still in Skyrim's ragdoll: let go, Skyrim gets up from this pose on its own
 			// (a corpse is held for good: it keeps moving in Delirium until it is really still, so the hold doesn't freeze a slide)
 			a.settled = (a.ragdolled && ke < (a.death ? 0.05f : 1.0f) && (!a.death || a.relaxed) && a.writheAt < 0.0f && a.writheUntil < 0.0f) ? a.settled + dt : 0.0f;
-			// not while Skyrim's stagger still runs underneath: its clip would show in the fade (Delirium plays the stagger,
+			// not while Skyrim's own stagger still runs underneath (the flag itself is ours while held, body/hold.cpp): its clip would show in the fade (Delirium plays the stagger,
 			// Skyrim keeps only its gameplay: the interrupted attack and the staggered state)
-			if (autoRelease_ && a.calm > 1.5f && !a.blendingOut && !a_actor->AsActorState()->IsStaggered()) {
+			if (autoRelease_ && a.calm > 1.5f && !a.blendingOut && !a.skyStagger) {
 				a.blendingOut = true;  // fade back into Skyrim's animation over kBlendOut, physics still running
 			}
 			if (a.blendingOut) {

@@ -380,8 +380,56 @@ namespace delirium
 		bool g_hitSinkOn = false;
 	}
 
+	// The animation event handlers that loose an arrow, fire a spell, staff or shout, or swing a weapon (slot 1,
+	// ExecuteHandler): for an NPC held upright in Delirium they do nothing (body/hold.cpp)
+	namespace
+	{
+		using HandlerFn = bool (*)(void*, RE::Actor&, const RE::BSFixedString&);
+		constexpr std::size_t kGates = 6;
+		std::array<std::uintptr_t*, kGates> g_gateSlot{};
+		std::array<HandlerFn, kGates>       g_origGate{};
+
+		template <std::size_t K>
+		bool GateHook(void* a_this, RE::Actor& a_actor, const RE::BSFixedString& a_event)
+		{
+			if (HoldsCombat(&a_actor)) {
+				return true;
+			}
+			return g_origGate[K](a_this, a_actor, a_event);
+		}
+		constexpr std::array<HandlerFn, kGates> kGateHooks{ &GateHook<0>, &GateHook<1>, &GateHook<2>, &GateHook<3>, &GateHook<4>, &GateHook<5> };
+
+		void HookGates()
+		{
+			// arrow release, left/right hand spell fire (staffs too), voice (shouts), right/left weapon swing
+			const std::array<REL::Relocation<std::uintptr_t>, kGates> vts{ REL::Relocation<std::uintptr_t>{ RE::VTABLE_ArrowReleaseHandler[0] },
+				REL::Relocation<std::uintptr_t>{ RE::VTABLE_LeftHandSpellFireHandler[0] }, REL::Relocation<std::uintptr_t>{ RE::VTABLE_RightHandSpellFireHandler[0] },
+				REL::Relocation<std::uintptr_t>{ RE::VTABLE_VoiceSpellFireHandler[0] }, REL::Relocation<std::uintptr_t>{ RE::VTABLE_WeaponRightSwingHandler[0] },
+				REL::Relocation<std::uintptr_t>{ RE::VTABLE_WeaponLeftSwingHandler[0] } };
+			for (std::size_t k = 0; k < kGates; ++k) {
+				if (g_gateSlot[k]) {
+					continue;
+				}
+				g_gateSlot[k] = reinterpret_cast<std::uintptr_t*>(vts[k].address()) + 1;
+				g_origGate[k] = reinterpret_cast<HandlerFn>(*g_gateSlot[k]);
+				PatchSlot(g_gateSlot[k], reinterpret_cast<std::uintptr_t>(kGateHooks[k]));
+			}
+			logger::info("gated {} attack/cast handlers for held NPCs", kGates);
+		}
+		void UnhookGates()
+		{
+			for (std::size_t k = 0; k < kGates; ++k) {
+				if (g_gateSlot[k]) {
+					PatchSlot(g_gateSlot[k], reinterpret_cast<std::uintptr_t>(g_origGate[k]));
+					g_gateSlot[k] = nullptr;
+				}
+			}
+		}
+	}
+
 	void HookArrows()
 	{
+		HookGates();
 		const std::array<REL::Relocation<std::uintptr_t>, 3> vts{ REL::Relocation<std::uintptr_t>{ RE::VTABLE_ArrowProjectile[0] },
 			REL::Relocation<std::uintptr_t>{ RE::VTABLE_MissileProjectile[0] }, REL::Relocation<std::uintptr_t>{ RE::VTABLE_BeamProjectile[0] } };
 		for (std::size_t k = 0; k < 3; ++k) {
@@ -400,6 +448,7 @@ namespace delirium
 	}
 	void UnhookArrows()
 	{
+		UnhookGates();
 		if (g_hitSinkOn) {
 			if (auto* events = RE::ScriptEventSourceHolder::GetSingleton()) {
 				events->RemoveEventSink<RE::TESHitEvent>(&g_hitSink);
