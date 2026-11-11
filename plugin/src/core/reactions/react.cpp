@@ -285,7 +285,7 @@ namespace delirium
 		} else {
 			dl.nm_agent_get_part_transform(a.agent, kChest, at, q);
 		}
-		const bool skyrims = a.calibrated || a.takeover;
+		const bool skyrims = a.ragdolled || a.takeover;
 		if (!skyrims) {
 			if (thrown) {
 				const float m = 60.0f * 0.5f;  // about half her weight's worth of the blast

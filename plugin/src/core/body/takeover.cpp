@@ -279,17 +279,17 @@ namespace delirium
 		logger::info("released ({}) after {:.1} s", a_why, a->age);
 		Unshow(*a);  // her meshes read her bones again (body/show.cpp)
 		RestoreJoints(*a);
-		for (std::size_t k = 0; k < a->weighed.size(); ++k) {
-			if (auto* body = a->weighed[k]) {
-				std::memcpy(&body->motion.inertiaAndMassInv, a->bodies[k].massInv.data(), sizeof(a->bodies[k].massInv));
-				if (k < a->material.size()) {
-					body->material.friction = a->material[k][0];
-					body->material.restitution = a->material[k][1];
+		for (std::size_t k = 0; k < a->sky.weighed.size(); ++k) {
+			if (auto* body = a->sky.weighed[k]) {
+				std::memcpy(&body->motion.inertiaAndMassInv, a->sky.bodies[k].massInv.data(), sizeof(a->sky.bodies[k].massInv));
+				if (k < a->sky.material.size()) {
+					body->material.friction = a->sky.material[k][0];
+					body->material.restitution = a->sky.material[k][1];
 				}
 				body->RemoveReference();
 			}
 		}
-		a->weighed.clear();
+		a->sky.weighed.clear();
 		if (auto act = a->actor.get(); act && act->IsInRagdollState()) {
 			releasedAt_[act->GetFormID()] = std::chrono::steady_clock::now();
 			skip_.push_back(a->actor);  // still in Skyrim's ragdoll (its get-up, or F2): not taken over again
@@ -408,7 +408,7 @@ namespace delirium
 	float Engine::BodyVelocities(const Active& a, std::array<V3, 21>& v, std::array<V3, 21>& w, std::array<bool, 21>& have) const
 	{
 		float fastest = 0;
-		for (const auto& b : a.bodies) {
+		for (const auto& b : a.sky.bodies) {
 			const int i = b.rotPart >= 0 ? b.rotPart : b.posPart;
 			if (i < 0 || have[i]) {
 				continue;
@@ -425,7 +425,7 @@ namespace delirium
 		}
 		// a part without a body of its own but carrying one (Skyrim's root body NPC COM rides on the pelvis): that body's
 		// velocity. The pelvis is Delirium's root: left at rest, the joint solve would pull the whole body back to it.
-		for (const auto& b : a.bodies) {
+		for (const auto& b : a.sky.bodies) {
 			if (b.follow < 0 || b.follow >= 21 || have[b.follow]) {
 				continue;
 			}
@@ -442,7 +442,7 @@ namespace delirium
 			// else the mass-weighted mean of all bodies (no spin)
 			V3    sum{};
 			float mass = 0;
-			for (const auto& b : a.bodies) {
+			for (const auto& b : a.sky.bodies) {
 				const auto* lv = reinterpret_cast<const float*>(&b.body->motion.linearVelocity);
 				const float im = b.massInv[3];
 				const float m = im > 0.0f ? 1.0f / im : 0.0f;
@@ -472,7 +472,7 @@ namespace delirium
 		const V3             o = Scl({ a.origin.x, a.origin.y, a.origin.z }, kUnit);
 		std::array<bool, 21> gotR{}, gotP{};
 		std::array<V3, 21>   joint{};
-		for (const auto& b : a.bodies) {
+		for (const auto& b : a.sky.bodies) {
 			const auto& ms = b.body->motion.motionState;
 			const auto* cl = reinterpret_cast<const float*>(&ms.sweptTransform.centerOfMassLocal);
 			const auto* cw = reinterpret_cast<const float*>(&ms.sweptTransform.centerOfMass1);
@@ -531,8 +531,8 @@ namespace delirium
 		}
 		for (int i = 0; i < 21; ++i) {
 			if (!std::isfinite(pos[i].x + pos[i].y + pos[i].z + rot[i].x + rot[i].y + rot[i].z + rot[i].w + v[i].x + v[i].y + v[i].z + w[i].x + w[i].y + w[i].z)) {
-				if (a.nanLog < 30) {
-					++a.nanLog;
+				if (a.sky.nanLog < 30) {
+					++a.sky.nanLog;
 					logger::error("    NaN sync age {:.3f}: part {}; Delirium left as it is", a.age, i);
 				}
 				return;

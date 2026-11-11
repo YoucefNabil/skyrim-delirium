@@ -276,7 +276,7 @@ namespace delirium
 			const V3    perp{ comv[0] - dir.x * along, comv[1] - dir.y * along, 0.0f };
 			const float sp = std::max(push * Rand(0.8f, 1.2f), along);  // running away from him: she keeps it
 			const V3    shift{ dir.x * sp + perp.x * 0.3f - comv[0], dir.y * sp + perp.y * 0.3f - comv[1], 0.0f };
-			if (a.calibrated || a.takeover) {
+			if (a.ragdolled || a.takeover) {
 				a.kicks.push_back({ -1, shift, {} });
 				a.speedCap = deathMaxSpeed_;
 			} else {

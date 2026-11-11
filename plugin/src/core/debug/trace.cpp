@@ -35,7 +35,7 @@ namespace delirium
 	void Engine::Trace(Active& a, RE::Actor* a_actor, const char*)
 	{
 		auto* root3d = a_actor->Get3D(false);
-		if (!root3d || !a.knockQueued || a.traceN >= 100 || (a.calibrated && a.age - a.calibAge > 1.0f)) {
+		if (!root3d || !a.knockQueued || a.traceN >= 100 || (a.ragdolled && a.age - a.ragdollAge > 1.0f)) {
 			return;
 		}
 		std::function<RE::NiTransform(RE::NiAVObject*)> world = [&](RE::NiAVObject* n) -> RE::NiTransform {
@@ -108,9 +108,9 @@ namespace delirium
 					backs += rig_[i].name;
 				}
 			}
-			const char* phase = !a.calibrated ? "ours" : TorqueMode(a) ? (a.following ? "torque" : "torque-wait") : "lead";
+			const char* phase = !a.ragdolled ? "ours" : TorqueMode(a) ? (a.following ? "torque" : "torque-wait") : "lead";
 			float       comSpeed = -1.0f;
-			for (auto& b : a.bodies) {
+			for (auto& b : a.sky.bodies) {
 				if (b.node == a.com) {
 					const auto* lv = reinterpret_cast<const float*>(&b.body->motion.linearVelocity);
 					comSpeed = std::sqrt(lv[0] * lv[0] + lv[1] * lv[1] + lv[2] * lv[2]);
@@ -143,11 +143,11 @@ namespace delirium
 	// each body's rotation in its Delirium part (rig offset * Skyrim's mapping) and the limits. One file per new set of limits.
 	void Engine::DumpRagdoll(const Active& a, RE::Actor* a_actor)
 	{
-		if (!a.driver || !a.driver->ragdoll || ragdollDumps_.size() >= 12) {
+		if (!a.sky.driver || !a.sky.driver->ragdoll || ragdollDumps_.size() >= 12) {
 			return;
 		}
 		const auto body = [&](RE::hkpEntity* e) -> const BodyLink* {
-			for (const auto& b : a.bodies) {
+			for (const auto& b : a.sky.bodies) {
 				if (b.body && static_cast<RE::hkpEntity*>(b.body) == e) {
 					return &b;
 				}
@@ -169,7 +169,7 @@ namespace delirium
 				ok ? q(Mul(rig_[static_cast<std::size_t>(b->rotPart)].offset, b->mapR)) : "null");
 		};
 		std::string js, sig;
-		for (auto* ci : a.driver->ragdoll->constraints) {
+		for (auto* ci : a.sky.driver->ragdoll->constraints) {
 			auto* d = ci ? ci->data : nullptr;
 			if (!d || (d->GetType() != 7 && d->GetType() != 2)) {
 				continue;

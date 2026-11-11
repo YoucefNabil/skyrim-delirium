@@ -42,40 +42,40 @@ namespace delirium
 			}
 		};
 		walk(a_actor->Get3D(false));
-		a.bodies.clear();
+		a.sky.bodies.clear();
 		std::string list;
-		for (auto* body : a.driver->ragdoll->rigidBodies) {
+		for (auto* body : a.sky.driver->ragdoll->rigidBodies) {
 			auto it = body ? owner.find(body) : owner.end();
 			if (it == owner.end()) {
 				continue;
 			}
 			BodyLink l{ body, it->second };
 			std::memcpy(l.massInv.data(), &body->motion.inertiaAndMassInv, sizeof(l.massInv));
-			a.bodies.push_back(l);
+			a.sky.bodies.push_back(l);
 		}
 		// Skyrim hangs each body exactly on its bone (havok units = game units * kUnit). Check it on distances between
 		// bodies vs between their bones: those don't care that the root hasn't caught up with the ragdoll yet.
 		float worst = 0;
-		for (std::size_t i = 1; i < a.bodies.size(); ++i) {
+		for (std::size_t i = 1; i < a.sky.bodies.size(); ++i) {
 			auto pos = [](const BodyLink& l) {
 				const float* t = reinterpret_cast<const float*>(&l.body->motion.motionState.transform.translation);
 				return V3{ t[0], t[1], t[2] };
 			};
 			auto bone = [](const BodyLink& l) { return Scl({ l.node->world.translate.x, l.node->world.translate.y, l.node->world.translate.z }, kUnit); };
-			const V3    db = Sub(pos(a.bodies[i]), pos(a.bodies[0])), dn = Sub(bone(a.bodies[i]), bone(a.bodies[0]));
+			const V3    db = Sub(pos(a.sky.bodies[i]), pos(a.sky.bodies[0])), dn = Sub(bone(a.sky.bodies[i]), bone(a.sky.bodies[0]));
 			const float lb = std::sqrt(db.x * db.x + db.y * db.y + db.z * db.z), ln = std::sqrt(dn.x * dn.x + dn.y * dn.y + dn.z * dn.z);
 			worst = std::max(worst, std::abs(lb - ln));
-			list += fmt::format(" {}", a.bodies[i].node->name.c_str());
+			list += fmt::format(" {}", a.sky.bodies[i].node->name.c_str());
 		}
 		list = fmt::format(" body-vs-bone spacing differs by at most {:.3} m;", worst) + list;
 		// Skyrim's own mapping between ragdoll bodies and animation bones (the one its ragdoll uses to pose the skeleton)
 		std::string mapLog;
 		int         mappedCount = 0;
 		{
-			auto* ch = a.driver->character;
+			auto* ch = a.sky.driver->character;
 			auto* setup = ch ? ch->setup.get() : nullptr;
 			auto* m = setup ? reinterpret_cast<const SkeletonMapper*>(setup->animationToRagdollSkeletonMapper.get()) : nullptr;
-			auto* rd = a.driver->ragdoll;
+			auto* rd = a.sky.driver->ragdoll;
 			auto* rs = rd->skeleton.get();
 			if (!m || !rs) {
 				mapLog = " no animation-to-ragdoll mapper";
@@ -83,7 +83,7 @@ namespace delirium
 				const bool animIsA = m->skeletonB == rs;
 				const auto* anim = animIsA ? m->skeletonA : m->skeletonB;
 				mapLog = fmt::format(" mapper: ragdoll skeleton is {} ({} simple mappings)", animIsA ? "B" : (m->skeletonA == rs ? "A" : "neither"), m->simpleCount);
-				for (auto& l : a.bodies) {
+				for (auto& l : a.sky.bodies) {
 					int k = -1;
 					for (int i = 0; i < static_cast<int>(rd->rigidBodies.size()); ++i) {
 						k = rd->rigidBodies[i] == l.body ? i : k;
@@ -126,18 +126,18 @@ namespace delirium
 				}
 			}
 		}
-		logger::info("{:08X}: {} of {} bodies mapped to Delirium parts;{}", a_actor->GetFormID(), mappedCount, a.bodies.size(), mapLog);
+		logger::info("{:08X}: {} of {} bodies mapped to Delirium parts;{}", a_actor->GetFormID(), mappedCount, a.sky.bodies.size(), mapLog);
 		{
 			// the ragdoll-to-animation mapper: what Skyrim's pose copy draws from each body
-			auto*       ch = a.driver->character;
+			auto*       ch = a.sky.driver->character;
 			auto*       setup = ch ? ch->setup.get() : nullptr;
 			const auto* m = setup ? reinterpret_cast<const SkeletonMapper*>(setup->ragdollToAnimationSkeletonMapper.get()) : nullptr;
-			auto*       rd = a.driver->ragdoll;
+			auto*       rd = a.sky.driver->ragdoll;
 			const auto* rs = rd ? rd->skeleton.get() : nullptr;
 			std::string drawLog;
 			if (m && rs && (m->skeletonA == rs || m->skeletonB == rs)) {
 				const bool ragIsA = m->skeletonA == rs;
-				for (auto& l : a.bodies) {
+				for (auto& l : a.sky.bodies) {
 					int k = -1;
 					for (int i = 0; i < static_cast<int>(rd->rigidBodies.size()); ++i) {
 						k = rd->rigidBodies[i] == l.body ? i : k;
@@ -182,7 +182,7 @@ namespace delirium
 				r = { q[0], q[1], q[2], q[3] };
 			};
 			std::string fl;
-			for (auto& l : a.bodies) {
+			for (auto& l : a.sky.bodies) {
 				if (l.mapped) {
 					continue;
 				}
@@ -220,15 +220,14 @@ namespace delirium
 			}
 		}
 		// Skyrim's ragdoll is the body (its own mass, gravity, collision); DriveRagdoll only moves it
-		a.calibrated = true;
-		a.calibAge = a.age;
+		a.sky.linked = true;
 		logger::info("{:08X}: Skyrim ragdoll has {} bodies, {} on bones:{}", a_actor->GetFormID(),
-			a.driver->ragdoll->rigidBodies.size(), a.bodies.size(), list);
+			a.sky.driver->ragdoll->rigidBodies.size(), a.sky.bodies.size(), list);
 		// trace: the joints' own friction and motors (they may eat the behaviours' small steady push)
 		{
 			std::string js;
 			int         friction = 0, motors = 0;
-			for (auto* ci : a.driver->ragdoll->constraints) {
+			for (auto* ci : a.sky.driver->ragdoll->constraints) {
 				auto* d = ci ? ci->data : nullptr;
 				if (!d) {
 					continue;
@@ -253,12 +252,12 @@ namespace delirium
 				}
 			}
 			logger::info("{:08X}: Skyrim ragdoll joints: {}, {} with friction, {} with motors on:{}", a_actor->GetFormID(),
-				a.driver->ragdoll->constraints.size(), friction, motors, js);
+				a.sky.driver->ragdoll->constraints.size(), friction, motors, js);
 		}
 		EaseJoints(a);
 		{
 			std::string bs;
-			for (auto* body : a.driver->ragdoll->rigidBodies) {
+			for (auto* body : a.sky.driver->ragdoll->rigidBodies) {
 				if (body) {
 					const auto& ms = body->motion.motionState;
 					bs += fmt::format(" {:.2f}/{:.2f}/{}", static_cast<float>(ms.linearDamping), static_cast<float>(ms.angularDamping), ms.maxAngularVelocity.value);
@@ -266,7 +265,7 @@ namespace delirium
 			}
 			logger::info("{:08X}: Skyrim ragdoll bodies' damping (linear/angular/max spin code):{}", a_actor->GetFormID(), bs);
 			std::string ms;
-			for (auto* body : a.driver->ragdoll->rigidBodies) {
+			for (auto* body : a.sky.driver->ragdoll->rigidBodies) {
 				if (body) {
 					ms += fmt::format(" {:.2f}/{:.2f}/{}", body->material.friction, body->material.restitution,
 						body->motion.motionState.deactivationClass);
@@ -274,13 +273,13 @@ namespace delirium
 			}
 			logger::info("{:08X}: Skyrim ragdoll bodies' friction/bounce/sleep class:{}", a_actor->GetFormID(), ms);
 			std::string ls;
-			for (auto* ci : a.driver->ragdoll->constraints) {
+			for (auto* ci : a.sky.driver->ragdoll->constraints) {
 				auto* d = ci ? ci->data : nullptr;
 				if (!d) {
 					continue;
 				}
 				std::string who = "?", dlim;
-				for (const auto& b : a.bodies) {
+				for (const auto& b : a.sky.bodies) {
 					if (b.body && reinterpret_cast<RE::hkpEntity*>(b.body) == ci->entities[0]) {
 						who = b.node ? b.node->name.c_str() : "?";
 						if (b.mapped && b.rotPart > 0) {

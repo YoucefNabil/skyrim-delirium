@@ -86,9 +86,9 @@ namespace delirium
 			} traceAfter{ this, a, a_actor };
 			RE::NiUpdateData ud{};
 			ClearJointFixOffset(a.ref[0], a.com);  // again: it can run between the pose copy and here
-			if (!TorqueMode(a) && a.calibrated && a.haveCom) {
+			if (!TorqueMode(a) && a.ragdolled && a.haveCom) {
 				// lead-in: ours moved toward Skyrim's COM, straight from its body (bone = body * (mapR, mapT)^-1)
-				for (const auto& b : a.bodies) {
+				for (const auto& b : a.sky.bodies) {
 					if (b.node != a.com) {
 						continue;
 					}
@@ -140,9 +140,9 @@ namespace delirium
 					(*it)->UpdateWorldData(&ud);
 				}
 				a.comWorld = a.com->parent->world * a.com->local;
-				if (a.age - a.calibAge < 0.45f) {
+				if (a.age - a.ragdollAge < 0.45f) {
 					// trace: which body state Skyrim's pose copy drew COM from (t1 = after the last step, t0 = before it)
-					for (const auto& b : a.bodies) {
+					for (const auto& b : a.sky.bodies) {
 						if (b.node != a.com) {
 							continue;
 						}
@@ -274,7 +274,7 @@ namespace delirium
 				float cp[3]{}, cv[3]{};
 				dl.nm_agent_get_com(a.agent, cp, cv);
 				logger::info("{:08X}: died while Delirium has her ({}{}): dying in Delirium", a_actor->GetFormID(),
-					a.calibrated ? "in Skyrim's ragdoll" : "on her feet", held ? ", after dying on her feet" : "");
+					a.ragdolled ? "in Skyrim's ragdoll" : "on her feet", held ? ", after dying on her feet" : "");
 				StartDying(a, { cv[0], cv[1], 0.0f }, held);
 			}
 			const float dt = std::clamp(a_delta, 0.0f, 0.1f);
@@ -527,7 +527,7 @@ namespace delirium
 					logger::info("{:08X}: dying on her feet: collapsing over {:.1f} s", a_actor->GetFormID(), period);
 				}
 			}
-			if (a.death && a.calibrated && !a.relaxed) {
+			if (a.death && a.ragdolled && !a.relaxed) {
 				if (a.writhe && !a.writhing && ((fallen && a.age - a.dyingAt >= dyingReact_) || a.age >= a.relaxAt)) {
 					a.writhing = true;
 					dl.nm_msg_begin(a.agent, "stopAllBehaviours");
@@ -625,7 +625,7 @@ namespace delirium
 			}
 			if (a.knockQueued && static_cast<int>(a.age) != static_cast<int>(a.age - dt)) {
 				logger::info("  ragdoll: knock state {}, in state {}, {} bodies, {} drives, fastest steer {:.1f} m/s, top node lag up to {:.2f} rad",
-					static_cast<int>(a_actor->AsActorState()->GetKnockState()), a_actor->IsInRagdollState(), a.bodies.size(), a.drives, a.maxSpeed,
+					static_cast<int>(a_actor->AsActorState()->GetKnockState()), a_actor->IsInRagdollState(), a.sky.bodies.size(), a.drives, a.maxSpeed,
 					a.maxRootLag);
 				if (a.following) {
 					logger::info("  muscles: joints asked for up to {:.2f} rad/s per step ({} at age {:.2f}; {} capped), bodies turned up to {:.2f} rad/s per step, {} spins capped (gain {:.2f}); limbs moving {:.0f} deg/s, behaviours' torques turned up to {:.2f} rad/s per step",
@@ -659,7 +659,7 @@ namespace delirium
 			a.calm = (balancing && !fallen && ke < 2.0f && a.sincePush > 1.0f && !a.knockQueued && a.burnUntil < 0.0f && a.shockUntil < 0.0f && a.chillUntil < 0.0f && a.reelUntil < 0.0f) ? a.calm + dt : 0.0f;
 			// lying still in Skyrim's ragdoll: let go, Skyrim gets up from this pose on its own
 			// (a corpse is held for good: it keeps moving in Delirium until it is really still, so the hold doesn't freeze a slide)
-			a.settled = (a.calibrated && ke < (a.death ? 0.05f : 1.0f) && (!a.death || a.relaxed) && a.writheAt < 0.0f && a.writheUntil < 0.0f) ? a.settled + dt : 0.0f;
+			a.settled = (a.ragdolled && ke < (a.death ? 0.05f : 1.0f) && (!a.death || a.relaxed) && a.writheAt < 0.0f && a.writheUntil < 0.0f) ? a.settled + dt : 0.0f;
 			// not while Skyrim's stagger still runs underneath: its clip would show in the fade (Delirium plays the stagger,
 			// Skyrim keeps only its gameplay: the interrupted attack and the staggered state)
 			if (autoRelease_ && a.calm > 1.5f && !a.blendingOut && !a_actor->AsActorState()->IsStaggered()) {
@@ -710,7 +710,7 @@ namespace delirium
 				Release(i, "not in Skyrim's ragdoll state for 3 s");
 				return;
 			}
-			if (a.calibrated) {
+			if (a.ragdolled) {
 				const auto ks = a_actor->AsActorState()->GetKnockState();
 				if (ks == RE::KNOCK_STATE_ENUM::kQueued || ks == RE::KNOCK_STATE_ENUM::kGetUp) {
 					Release(i, "Skyrim started its get-up");
@@ -742,7 +742,7 @@ namespace delirium
 				// COM as this pose copy left it (ours or Skyrim's ragdoll pose): AfterRootMove holds it there
 				p->comWorld = p->com->world;
 				p->haveCom = p->knockQueued && !TorqueMode(*p);
-				if (p->haveCom && p->calibrated && p->traceN < 100) {
+				if (p->haveCom && p->ragdolled && p->traceN < 100) {
 					logger::info("    copy {:.3f} {}: COM {:.1f} {:.1f} {:.1f}, top {:.1f} {:.1f} {:.1f}", p->age, a_postPhysics ? "post" : "pre ", p->comWorld.translate.x,
 						p->comWorld.translate.y, p->comWorld.translate.z, top->world.translate.x, top->world.translate.y, top->world.translate.z);
 				}
@@ -777,7 +777,7 @@ namespace delirium
 			add(a.ja[i]);
 			add(a.jb[i]);
 		}
-		for (const auto& b : a.bodies) {
+		for (const auto& b : a.sky.bodies) {
 			add(b.node);
 		}
 		if (top->parent) {
@@ -798,9 +798,13 @@ namespace delirium
 			++a.poses;
 			// Skyrim's animated pose in world space (the bone locals are fresh from the graph), then Delirium's bones over it
 			RefreshBones(a);
-			if (a_postPhysics && !a.calibrated && a.driver && a_actor->IsInRagdollState()) {
+			if (a_postPhysics && !a.ragdolled && a.sky.driver && a_actor->IsInRagdollState()) {
 				// the bones were just posed from Skyrim's ragdoll bodies: where each body sits on its bone
 				Calibrate(a, a_actor);
+				if (a.sky.linked) {
+					a.ragdolled = true;
+					a.ragdollAge = a.age;
+				}
 				if (a.takeover) {
 					InheritVelocity(a);
 				}
@@ -845,8 +849,8 @@ namespace delirium
 			// trace, through F7's lead-in: Skyrim's pose (from its bodies) vs ours, relative to the pelvis = the jump the
 			// switch to Skyrim's bodies will show
 			std::array<RE::NiTransform, 21> sky{}, skyC{};
-			const bool                      gap = a_postPhysics && a.calibrated && a.traceN < 100;
-			const bool                      dump = gap && a.age - a.calibAge > 0.12f && !a.dumped;
+			const bool                      gap = a_postPhysics && a.ragdolled && a.traceN < 100;
+			const bool                      dump = gap && a.age - a.ragdollAge > 0.12f && !a.dumped;
 			if (dump) {
 				for (std::size_t i = 0; i < 21; ++i) {
 					if (a.ref[i]) {
@@ -861,11 +865,11 @@ namespace delirium
 					}
 				}
 			}
-			a.haveSkyCom = a.calibrated && a_postPhysics;
+			a.haveSkyCom = a.ragdolled && a_postPhysics;
 			if (a.haveSkyCom) {
 				a.skyComLocal = a.com->local;
 			}
-			a.limbBlend = a.calibrated ? LeadShare(a) : 1.0f;
+			a.limbBlend = a.ragdolled ? LeadShare(a) : 1.0f;
 			WriteBones(a);
 			a.limbBlend = 1.0f;
 			KeepPrevious(a_actor->Get3D(false), a.drawnWorld);
@@ -921,7 +925,7 @@ namespace delirium
 				logger::info("    gap {:.3f}: Skyrim's pose vs ours (from the pelvis): {:.3f} m ({}), {:.0f} deg ({});{}", a.age, wp, rig_[ip].name, wr, rig_[ir].name, cl);
 			}
 			// the bones as we just posed them: the bodies' targets until DriveRagdoll's next step sets its own
-			for (auto& b : a.bodies) {
+			for (auto& b : a.sky.bodies) {
 				if (a_postPhysics || !b.hasTarget) {
 					b.target = Scl({ b.node->world.translate.x, b.node->world.translate.y, b.node->world.translate.z }, kUnit);
 					b.targetRot = FromMat(b.node->world.rotate);

@@ -29,11 +29,11 @@ namespace delirium
 	// behaviours' steady push, so a writhe or a shock died after the landing. Off while Delirium drives, back on release.
 	void Engine::EaseJoints(Active& a)
 	{
-		if (friction_ >= 1.0f || !a.eased.empty() || !a.driver || !a.driver->ragdoll) {
+		if (friction_ >= 1.0f || !a.sky.eased.empty() || !a.sky.driver || !a.sky.driver->ragdoll) {
 			return;
 		}
 		int n = 0;
-		for (auto* ci : a.driver->ragdoll->constraints) {
+		for (auto* ci : a.sky.driver->ragdoll->constraints) {
 			auto* d = ci ? ci->data : nullptr;
 			auto* f = d ? FrictionOf(d) : nullptr;
 			if (!f) {
@@ -49,7 +49,7 @@ namespace delirium
 			}
 			++it->second.second;
 			d->AddReference();
-			a.eased.push_back(d);
+			a.sky.eased.push_back(d);
 			++n;
 		}
 		logger::info("  joint friction x{:.2f} on {} joints while Delirium drives", friction_, n);
@@ -57,7 +57,7 @@ namespace delirium
 
 	void Engine::RestoreJoints(Active& a)
 	{
-		for (auto* d : a.eased) {
+		for (auto* d : a.sky.eased) {
 			if (auto it = eased_.find(d); it != eased_.end() && --it->second.second <= 0) {
 				if (auto* f = FrictionOf(d)) {
 					f->maxFrictionTorque = it->second.first;
@@ -66,7 +66,7 @@ namespace delirium
 			}
 			d->RemoveReference();
 		}
-		a.eased.clear();
+		a.sky.eased.clear();
 	}
 
 	bool Engine::DeliriumBone(const Active& a, const BodyLink& l, V3& a_pos, Q& a_rot) const
@@ -85,29 +85,29 @@ namespace delirium
 
 	float Engine::LeadShare(const Active& a) const
 	{
-		if (!a.calibrated || a.takeover) {
-			return a.calibrated ? 0.0f : 1.0f;
+		if (!a.ragdolled || a.takeover) {
+			return a.ragdolled ? 0.0f : 1.0f;
 		}
-		return std::clamp(1.0f - (a.age - a.calibAge) / 0.15f, 0.0f, 1.0f);
+		return std::clamp(1.0f - (a.age - a.ragdollAge) / 0.15f, 0.0f, 1.0f);
 	}
 
 	bool Engine::TorqueMode(const Active& a) const
 	{
 		// F7: Delirium leads the first 0.15 s (the push is Delirium's), then follows
-		return a.calibrated && (a.takeover || a.age - a.calibAge >= 0.15f);
+		return a.ragdolled && (a.takeover || a.age - a.ragdollAge >= 0.15f);
 	}
 
 	// which of Skyrim's bodies each Delirium part's drive lands on: the body it gives its rotation to, else its position,
 	// else the body riding on it; parts with no body (clavicles) go to the nearest body up the chain
 	void Engine::MapParts(Active& a)
 	{
-		a.partBody.fill(-1);
+		a.sky.partBody.fill(-1);
 		int pivots = 0;
-		for (auto& b : a.bodies) {
+		for (auto& b : a.sky.bodies) {
 			b.havePivot = false;
 		}
-		if (a.driver && a.driver->ragdoll) {
-			for (auto* ci : a.driver->ragdoll->constraints) {
+		if (a.sky.driver && a.sky.driver->ragdoll) {
+			for (auto* ci : a.sky.driver->ragdoll->constraints) {
 				auto* d = ci ? ci->data : nullptr;
 				if (!d || (d->GetType() != 7 && d->GetType() != 2)) {
 					continue;
@@ -115,7 +115,7 @@ namespace delirium
 				const auto& tA = d->GetType() == 7 ? static_cast<RE::hkpRagdollConstraintData*>(d)->atoms.transforms.transformA :
 				                                     static_cast<RE::hkpLimitedHingeConstraintData*>(d)->atoms.transforms.transformA;
 				const auto* t = reinterpret_cast<const float*>(&tA.translation);
-				for (auto& b : a.bodies) {
+				for (auto& b : a.sky.bodies) {
 					if (b.body && reinterpret_cast<RE::hkpEntity*>(b.body) == ci->entities[0]) {
 						b.pivot = { t[0], t[1], t[2] };
 						b.havePivot = true;
@@ -127,44 +127,44 @@ namespace delirium
 		}
 		logger::info("  {} of Skyrim's bodies have their joint's pivot: muscles turn them about it{}", pivots, aboutJoint_ ? "" : " (off)");
 		for (int pass = 0; pass < 3; ++pass) {
-			for (std::size_t k = 0; k < a.bodies.size(); ++k) {
-				const auto& b = a.bodies[k];
+			for (std::size_t k = 0; k < a.sky.bodies.size(); ++k) {
+				const auto& b = a.sky.bodies[k];
 				const int   p = pass == 0 ? (b.mapped ? b.rotPart : -1) : pass == 1 ? (b.mapped ? b.posPart : -1) : (b.mapped ? -1 : b.follow);
-				if (p >= 0 && p < 21 && a.partBody[p] < 0) {
-					a.partBody[p] = static_cast<int>(k);
+				if (p >= 0 && p < 21 && a.sky.partBody[p] < 0) {
+					a.sky.partBody[p] = static_cast<int>(k);
 				}
 			}
 		}
 		for (int p = 0; p < 21; ++p) {
 			int up = p;
-			while (a.partBody[up] < 0 && kParent[up] >= 0) {
+			while (a.sky.partBody[up] < 0 && kParent[up] >= 0) {
 				up = kParent[up];
 			}
-			if (a.partBody[p] < 0) {
-				a.partBody[p] = a.partBody[up];
+			if (a.sky.partBody[p] < 0) {
+				a.sky.partBody[p] = a.sky.partBody[up];
 			}
 		}
-		std::vector<float> dm(a.bodies.size(), 0.0f);
+		std::vector<float> dm(a.sky.bodies.size(), 0.0f);
 		for (int p = 0; p < 21; ++p) {
-			if (a.partBody[p] >= 0) {
-				dm[static_cast<std::size_t>(a.partBody[p])] += a.partMass[static_cast<std::size_t>(p)];  // at her size (body/fit.cpp)
+			if (a.sky.partBody[p] >= 0) {
+				dm[static_cast<std::size_t>(a.sky.partBody[p])] += a.partMass[static_cast<std::size_t>(p)];  // at her size (body/fit.cpp)
 			}
 		}
 		std::string s;
 		float       dt = 0, ht = 0;
-		for (std::size_t k = 0; k < a.bodies.size(); ++k) {
-			const auto& b = a.bodies[k];
+		for (std::size_t k = 0; k < a.sky.bodies.size(); ++k) {
+			const auto& b = a.sky.bodies[k];
 			const float hm = b.massInv[3] > 0 ? 1.0f / b.massInv[3] : 0.0f;
 			dt += dm[k];
 			ht += hm;
 			s += fmt::format(" {} {:.1f}/{:.1f}", b.node ? b.node->name.c_str() : "?", dm[k], hm);
 		}
 		logger::info("  torque drive: Delirium follows Skyrim's ragdoll, its muscles move it; mass Delirium/Skyrim kg {:.1f}/{:.1f}:{}", dt, ht, s);
-		if (matchMass_ && a.weighed.empty()) {
-			a.weighed.assign(a.bodies.size(), nullptr);
+		if (matchMass_ && a.sky.weighed.empty()) {
+			a.sky.weighed.assign(a.sky.bodies.size(), nullptr);
 			int n = 0;
-			for (std::size_t k = 0; k < a.bodies.size(); ++k) {
-				auto&       b = a.bodies[k];
+			for (std::size_t k = 0; k < a.sky.bodies.size(); ++k) {
+				auto&       b = a.sky.bodies[k];
 				const float hm = b.massInv[3] > 0 ? 1.0f / b.massInv[3] : 0.0f;
 				if (!b.body || dm[k] < 0.05f || hm <= 0.0f) {
 					continue;
@@ -177,15 +177,15 @@ namespace delirium
 				}
 				b.body->AddReference();
 				std::memcpy(&b.body->motion.inertiaAndMassInv, mi, sizeof(mi));
-				a.weighed[k] = b.body;
+				a.sky.weighed[k] = b.body;
 				++n;
 				if (matchContact_) {
 					// Delirium's grip (feet 1, hands 2.25, else 0.75) and bounce (0.4): Skyrim's 2.5 grip held her limbs to the
 					// ground, its 0.8-1.2 bounce kicked them off it
-					if (a.material.size() != a.bodies.size()) {
-						a.material.assign(a.bodies.size(), { 0.0f, 0.0f });
+					if (a.sky.material.size() != a.sky.bodies.size()) {
+						a.sky.material.assign(a.sky.bodies.size(), { 0.0f, 0.0f });
 					}
-					a.material[k] = { b.body->material.friction, b.body->material.restitution };
+					a.sky.material[k] = { b.body->material.friction, b.body->material.restitution };
 					const std::string nm = b.node ? b.node->name.c_str() : "";
 					b.body->material.friction = nm.find("Foot") != std::string::npos ? 1.0f : nm.find("Hand") != std::string::npos ? 2.25f : 0.75f;
 					b.body->material.restitution = 0.4f;
@@ -210,11 +210,11 @@ namespace delirium
 			return V3{ m[0] * v.x + m[1] * v.y + m[2] * v.z, m[3] * v.x + m[4] * v.y + m[5] * v.z, m[6] * v.x + m[7] * v.y + m[8] * v.z };
 		};
 		auto len = [](const V3& v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); };
-		const std::size_t n = a.bodies.size();
+		const std::size_t n = a.sky.bodies.size();
 		std::vector<M3>   inv(n);
 		for (std::size_t k = 0; k < n; ++k) {
 			// world inverse inertia: R diag(i) R^T (havok keeps it diagonal in the body's frame)
-			const auto& mo = a.bodies[k].body->motion;
+			const auto& mo = a.sky.bodies[k].body->motion;
 			const auto* d = reinterpret_cast<const float*>(&mo.inertiaAndMassInv);
 			const auto* qc = reinterpret_cast<const float*>(&mo.motionState.sweptTransform.rotation1);
 			const Q     q{ qc[0], qc[1], qc[2], qc[3] };
@@ -235,7 +235,7 @@ namespace delirium
 		const float     h = std::clamp(a_dt, 0.0f, 0.05f) * gain_;
 		std::vector<V3> dw(n), dv(n);
 		for (int p = 1; p < 21; ++p) {
-			const int c = a.partBody[p], pb = a.partBody[kParent[p]];
+			const int c = a.sky.partBody[p], pb = a.sky.partBody[kParent[p]];
 			const float* ac = a.acc.data() + p * 3;
 			if (c < 0 || pb < 0 || c == pb || !std::isfinite(ac[0] + ac[1] + ac[2])) {
 				continue;
@@ -244,8 +244,8 @@ namespace delirium
 			if (damp_ > 0.0f) {
 				// tensed muscles: the joint's spin (child vs parent) is cut by damp_ this step. Skyrim's joints have almost
 				// no damping of their own, so limbs bounce on landing
-				const auto* wc = reinterpret_cast<const float*>(&a.bodies[c].body->motion.angularVelocity);
-				const auto* wp = reinterpret_cast<const float*>(&a.bodies[pb].body->motion.angularVelocity);
+				const auto* wc = reinterpret_cast<const float*>(&a.sky.bodies[c].body->motion.angularVelocity);
+				const auto* wp = reinterpret_cast<const float*>(&a.sky.bodies[pb].body->motion.angularVelocity);
 				want = Sub(want, Scl({ wc[0] - wp[0], wc[1] - wp[1], wc[2] - wp[2] }, damp_));
 			}
 			const float lw = len(want);
@@ -274,20 +274,20 @@ namespace delirium
 			const V3 wc = mul(inv[c], t), wp = Scl(mul(inv[pb], t), -1.0f);
 			dw[c] = Add(dw[c], wc);
 			dw[pb] = Add(dw[pb], wp);
-			if (aboutJoint_ && a.bodies[c].havePivot) {
+			if (aboutJoint_ && a.sky.bodies[c].havePivot) {
 				auto cross = [](const V3& x, const V3& y) { return V3{ x.y * y.z - x.z * y.y, x.z * y.x - x.x * y.z, x.x * y.y - x.y * y.x }; };
-				const auto& mc = a.bodies[c].body->motion.motionState;
+				const auto& mc = a.sky.bodies[c].body->motion.motionState;
 				const auto* oc = reinterpret_cast<const float*>(&mc.transform.translation);
 				const auto* qc = reinterpret_cast<const float*>(&mc.sweptTransform.rotation1);
-				const V3    piv = Add({ oc[0], oc[1], oc[2] }, Rot(Q{ qc[0], qc[1], qc[2], qc[3] }, a.bodies[c].pivot));
+				const V3    piv = Add({ oc[0], oc[1], oc[2] }, Rot(Q{ qc[0], qc[1], qc[2], qc[3] }, a.sky.bodies[c].pivot));
 				const auto* cc = reinterpret_cast<const float*>(&mc.sweptTransform.centerOfMass1);
-				const auto* cp = reinterpret_cast<const float*>(&a.bodies[pb].body->motion.motionState.sweptTransform.centerOfMass1);
+				const auto* cp = reinterpret_cast<const float*>(&a.sky.bodies[pb].body->motion.motionState.sweptTransform.centerOfMass1);
 				dv[c] = Add(dv[c], cross(wc, Sub({ cc[0], cc[1], cc[2] }, piv)));
 				dv[pb] = Add(dv[pb], cross(wp, Sub({ cp[0], cp[1], cp[2] }, piv)));
 			}
 		}
 		for (int p = 0; p < 21; ++p) {
-			const int    k = a.partBody[p];
+			const int    k = a.sky.partBody[p];
 			const float* e = a.ext.data() + p * 3;
 			if (k >= 0 && std::isfinite(e[0] + e[1] + e[2])) {
 				V3          turn = Scl(mul(inv[k], { e[0], e[1], e[2] }), h);
@@ -300,10 +300,10 @@ namespace delirium
 			}
 		}
 		for (int p = 0; p < 21; ++p) {
-			const int    k = a.partBody[p];
+			const int    k = a.sky.partBody[p];
 			const float* d = a.drv.data() + p * 6;
 			if (k >= 0 && std::isfinite(d[0] + d[1] + d[2])) {
-				const float im = reinterpret_cast<const float*>(&a.bodies[k].body->motion.inertiaAndMassInv)[3];
+				const float im = reinterpret_cast<const float*>(&a.sky.bodies[k].body->motion.inertiaAndMassInv)[3];
 				dv[k] = Add(dv[k], Scl({ d[0], d[1], d[2] }, im * h));
 			}
 		}
@@ -316,12 +316,12 @@ namespace delirium
 				}
 				continue;
 			}
-			const int bi = kk.part < 21 ? a.partBody[kk.part] : -1;  // mapped by now (a body taken back is mapped after the blow)
+			const int bi = kk.part < 21 ? a.sky.partBody[kk.part] : -1;  // mapped by now (a body taken back is mapped after the blow)
 			if (bi < 0 || static_cast<std::size_t>(bi) >= n) {
 				continue;
 			}
 			const auto  k = static_cast<std::size_t>(bi);
-			const float im = reinterpret_cast<const float*>(&a.bodies[k].body->motion.inertiaAndMassInv)[3];
+			const float im = reinterpret_cast<const float*>(&a.sky.bodies[k].body->motion.inertiaAndMassInv)[3];
 			kv[k] = Add(kv[k], Scl(kk.j, im));
 			const V3 tq{ kk.arm.y * kk.j.z - kk.arm.z * kk.j.y, kk.arm.z * kk.j.x - kk.arm.x * kk.j.z, kk.arm.x * kk.j.y - kk.arm.y * kk.j.x };
 			dw[k] = Add(dw[k], mul(inv[k], tq));
@@ -330,7 +330,7 @@ namespace delirium
 		const float cap = a.speedCap;  // once: her death's spikes
 		a.speedCap = -1.0f;
 		for (std::size_t k = 0; k < n; ++k) {
-			auto& b = a.bodies[k];
+			auto& b = a.sky.bodies[k];
 			auto& mo = b.body->motion;
 			V3    v = dv[k];
 			if (const float l = len(v); l > 3.0f) {
@@ -340,16 +340,16 @@ namespace delirium
 			a.maxDw = std::max(a.maxDw, len(dw[k]));
 			if (k == 0) {
 				// trace: how much the limbs visibly move (mean spin of every body against the pelvis body), as fit-test layers measures it
-				const int pk = a.partBody[0];
+				const int pk = a.sky.partBody[0];
 				if (pk >= 0) {
-					const auto* w0 = reinterpret_cast<const float*>(&a.bodies[pk].body->motion.angularVelocity);
+					const auto* w0 = reinterpret_cast<const float*>(&a.sky.bodies[pk].body->motion.angularVelocity);
 					float       sum = 0.0f;
 					int         cnt = 0;
 					for (std::size_t j = 0; j < n; ++j) {
 						if (static_cast<int>(j) == pk) {
 							continue;
 						}
-						const auto* wj = reinterpret_cast<const float*>(&a.bodies[j].body->motion.angularVelocity);
+						const auto* wj = reinterpret_cast<const float*>(&a.sky.bodies[j].body->motion.angularVelocity);
 						sum += len({ wj[0] - w0[0], wj[1] - w0[1], wj[2] - w0[2] });
 						++cnt;
 					}
@@ -358,7 +358,7 @@ namespace delirium
 						++a.actN;
 					}
 					// trace: how far each limb actually swings (a jitter spins fast and goes nowhere)
-					const auto* q0c = reinterpret_cast<const float*>(&a.bodies[pk].body->motion.motionState.sweptTransform.rotation1);
+					const auto* q0c = reinterpret_cast<const float*>(&a.sky.bodies[pk].body->motion.motionState.sweptTransform.rotation1);
 					const Q     q0i = Conj(Q{ q0c[0], q0c[1], q0c[2], q0c[3] });
 					const bool  fresh = a.actRef.size() != n;
 					if (fresh) {
@@ -366,13 +366,13 @@ namespace delirium
 						a.actSwing.assign(n, 0.0f);
 					}
 					for (std::size_t j = 0; j < n; ++j) {
-						const auto* qc = reinterpret_cast<const float*>(&a.bodies[j].body->motion.motionState.sweptTransform.rotation1);
+						const auto* qc = reinterpret_cast<const float*>(&a.sky.bodies[j].body->motion.motionState.sweptTransform.rotation1);
 						const Q     r = Mul(q0i, Q{ qc[0], qc[1], qc[2], qc[3] });
 						if (fresh) {
 							a.actRef[j] = r;
 							continue;
 						}
-						a.sleepMax = std::max<int>(a.sleepMax, a.bodies[j].body->motion.deactivationNumInactiveFrames[0]);
+						a.sleepMax = std::max<int>(a.sleepMax, a.sky.bodies[j].body->motion.deactivationNumInactiveFrames[0]);
 						const Q&    f = a.actRef[j];
 						const float d = std::min(1.0f, std::abs(f.x * r.x + f.y * r.y + f.z * r.z + f.w * r.w));
 						a.actSwing[j] = std::max(a.actSwing[j], 2.0f * std::acos(d) * 57.3f);
@@ -425,11 +425,11 @@ namespace delirium
 			if (a.actor.get().get() != a_actor) {
 				continue;
 			}
-			a.driver = a_driver;
+			a.sky.driver = a_driver;
 			if (!a_after) {
 				++a.physSteps;
 			}
-			if (!a.calibrated || !a_driver->ragdoll) {
+			if (!a.sky.linked || !a_driver->ragdoll) {
 				return;
 			}
 			if (!a_after && TorqueMode(a)) {
@@ -438,43 +438,27 @@ namespace delirium
 					++a.drives;
 				} else {
 					// Delirium starts following on the next frame: until then Skyrim's ragdoll runs on its own
-					for (auto& b : a.bodies) {
+					for (auto& b : a.sky.bodies) {
 						b.hasTarget = false;
 					}
 				}
 				return;
 			}
 			if (a_after) {
-				// Skyrim's own driver has run: our velocities go back on
-				float       over = 0;
-				std::string overBody;
-				for (auto& b : a.bodies) {
-					if (!b.hasTarget) {
-						continue;
-					}
-					auto* lv = reinterpret_cast<float*>(&b.body->motion.linearVelocity);
-					auto* av = reinterpret_cast<float*>(&b.body->motion.angularVelocity);
-					const float o = std::sqrt((lv[0] - b.lin.x) * (lv[0] - b.lin.x) + (lv[1] - b.lin.y) * (lv[1] - b.lin.y) + (lv[2] - b.lin.z) * (lv[2] - b.lin.z));
-					if (o > over) {
-						over = o;
-						overBody = b.node ? b.node->name.c_str() : "?";
-					}
-					lv[0] = b.lin.x, lv[1] = b.lin.y, lv[2] = b.lin.z, lv[3] = 0;
-					av[0] = b.ang.x, av[1] = b.ang.y, av[2] = b.ang.z, av[3] = 0;
-				}
+				const auto [over, overBody] = a.sky.Reapply();
 				if (!TorqueMode(a) && a.traceN < 100) {
 					logger::info("    kf {:.3f}: Skyrim's driver changed a body's velocity by up to {:.2f} m/s ({})", a.age, over, overBody);
 				}
 				return;
 			}
 			// the targets come straight from Delirium's body through Skyrim's own body<->bone mapping: no bone, no root involved
-			for (auto& b : a.bodies) {
+			for (auto& b : a.sky.bodies) {
 				if (b.mapped) {
 					BodyTarget(a, b, b.target, b.targetRot);
 					b.hasTarget = true;
 				}
 			}
-			for (auto& b : a.bodies) {
+			for (auto& b : a.sky.bodies) {
 				if (b.follow >= 0) {
 					BodyLink bone;
 					bone.mapped = true;
@@ -491,74 +475,11 @@ namespace delirium
 				}
 			}
 			// F7's first 0.15 s (the push is Delirium's): the velocities that carry each body onto Delirium's pose in one step
-			const float inv = 1.0f / std::max(a_dt, 1.0f / 240.0f);
-			{
-				// trace: how far each body ended from where the last step sent it
-				float       miss = 0;
-				std::string missBody;
-				for (auto& b : a.bodies) {
-					if (!b.haveAim) {
-						continue;
-					}
-					const auto* cw = reinterpret_cast<const float*>(&b.body->motion.motionState.sweptTransform.centerOfMass1);
-					const V3    d = Sub({ cw[0], cw[1], cw[2] }, b.aimCom);
-					const float l = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
-					if (l > miss) {
-						miss = l;
-						missBody = b.node ? b.node->name.c_str() : "?";
-					}
-				}
-				if (a.traceN < 100) {
-					logger::info("    kf {:.3f}: dt {:.4f}, bodies ended up to {:.3f} m from where the last step sent them ({})", a.age, a_dt, miss, missBody);
-				}
+			if (a.traceN < 100) {
+				const auto [miss, missBody] = a.sky.Missed();
+				logger::info("    kf {:.3f}: dt {:.4f}, bodies ended up to {:.3f} m from where the last step sent them ({})", a.age, a_dt, miss, missBody);
 			}
-			for (auto& b : a.bodies) {
-				if (!b.hasTarget) {
-					continue;
-				}
-				auto&       ms = b.body->motion.motionState;
-				const Q     qt = b.targetRot;
-				const V3    pt = b.target;
-				const auto* cl = reinterpret_cast<const float*>(&ms.sweptTransform.centerOfMassLocal);
-				const auto* cw = reinterpret_cast<const float*>(&ms.sweptTransform.centerOfMass1);
-				const auto* qc = reinterpret_cast<const float*>(&ms.sweptTransform.rotation1);
-				const V3    com = Add(pt, Rot(qt, { cl[0], cl[1], cl[2] }));
-				const V3    lin = Scl(Sub(com, { cw[0], cw[1], cw[2] }), inv);
-				b.aimCom = com;
-				b.haveAim = true;
-				Q           d = Mul(qt, Conj({ qc[0], qc[1], qc[2], qc[3] }));
-				if (d.w < 0) {
-					d = { -d.x, -d.y, -d.z, -d.w };
-				}
-				const float s = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
-				const float ang = 2.0f * std::atan2(s, d.w);
-				const V3    w = s > 1e-6f ? Scl({ d.x, d.y, d.z }, ang / s * inv) : V3{};
-				// capped: one bad frame must never launch the body (it then catches up over a few frames)
-				auto cap = [](V3 v, float m) {
-					const float l = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-					return l > m ? Scl(v, m / l) : v;
-				};
-				// the cap only guards against garbage
-				V3 linC = cap(lin, 200.0f), wC = cap(w, 400.0f);
-				auto finite = [](const V3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); };
-				if (!finite(linC) || !finite(wC) || !finite(pt) || !std::isfinite(qt.w)) {
-					// never hand a NaN to havok: the whole ragdoll (and the cloth, hair and gear hanging on it) breaks
-					if (a.nanLog < 30) {
-						++a.nanLog;
-						logger::error("    NaN drive age {:.3f} {}: target ({} {} {}) rot w {}, body now ({} {} {}), steer ({} {} {}) turn ({} {} {})", a.age,
-							b.node ? b.node->name.c_str() : "?", pt.x, pt.y, pt.z, qt.w, cw[0], cw[1], cw[2], lin.x, lin.y, lin.z, w.x, w.y, w.z);
-					}
-					linC = {};
-					wC = {};
-				}
-				a.maxSpeed = std::max(a.maxSpeed, std::sqrt(lin.x * lin.x + lin.y * lin.y + lin.z * lin.z));
-				auto*       lv = reinterpret_cast<float*>(&b.body->motion.linearVelocity);
-				auto*       av = reinterpret_cast<float*>(&b.body->motion.angularVelocity);
-				lv[0] = linC.x, lv[1] = linC.y, lv[2] = linC.z, lv[3] = 0;
-				av[0] = wC.x, av[1] = wC.y, av[2] = wC.z, av[3] = 0;
-				b.lin = linC;
-				b.ang = wC;
-			}
+			a.maxSpeed = std::max(a.maxSpeed, a.sky.DriveToTargets(a_dt, a.age));
 			++a.drives;
 			return;
 		}

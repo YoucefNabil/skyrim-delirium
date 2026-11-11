@@ -2,6 +2,8 @@
 
 #define DELIRIUM_PHYSICS_STATIC
 #include "delirium_physics.h"
+#include "vec.h"
+#include "body/skyrim_body.h"
 
 #include <SimpleIni.h>
 
@@ -18,14 +20,6 @@ namespace delirium
 		using Any = std::variant<bool, long long, float, std::string>;
 	}
 
-	struct V3
-	{
-		float x{}, y{}, z{};
-	};
-	struct Q
-	{
-		float x{}, y{}, z{}, w{ 1.0f };
-	};
 
 	// One line of the rig file (fit-test's write_rig): how a physics part sits on its Skyrim bone.
 	struct RigPart
@@ -137,42 +131,10 @@ namespace delirium
 		bool OnKill(RE::Actor* a_actor, RE::Actor* a_attacker, float a_damage, bool a_sendEvent, bool a_ragdollInstant);
 
 	private:
-		// one of Skyrim's ragdoll bodies and the bone it hangs on (the body sits on the bone, havok units = game units * kUnit).
-		struct BodyLink
-		{
-			RE::hkpRigidBody* body{};
-			RE::NiAVObject*   node{};
-			V3                target;  // where we posed the bone (havok units), saved before Skyrim syncs bones to bodies
-			Q                 targetRot;
-			bool              hasTarget{};
-			std::array<float, 4> massInv{};  // the body's own inertia/mass inverse
-			bool              havePivot{};     // its joint to its parent body: the pivot in the body's own frame (havok units)
-			V3                pivot;
-			V3                lin, ang;  // the velocities we set this step (re-applied after Skyrim's driver)
-			V3                aimCom;    // trace: where the last keyframe sent the body's centre of mass
-			bool              haveAim{};
-			// Skyrim's own ragdoll<->animation mapping for this body: body = animation bone * (mapR, mapT) (mapT unscaled)
-			bool              mapped{};
-			Q                 mapR;
-			V3                mapT;
-			// the way back, as Skyrim's pose copy draws it (its ragdoll-to-animation mapper): bone = body * (drawR, drawT)
-			bool              haveDraw{};
-			Q                 drawR;
-			V3                drawT;
-			int               posPart{ -1 }, rotPart{ -1 };  // the Delirium parts that give the bone's position / rotation
-			// no Delirium part (NPC COM, the ragdoll's root): rides rigidly on the nearest Delirium bone (rig part index)
-			int               follow{ -1 };
-			Q                 followR;  // this body in that bone's frame, from calibration (havok units)
-			V3                followT;
-		};
-
 		struct Active
 		{
 			RE::ActorHandle                    actor;
 			NmAgent*                           agent{};
-			std::vector<RE::hkpConstraintData*> eased;   // joints whose friction we took off (held, put back on release)
-			std::vector<RE::hkpRigidBody*>      weighed; // bodies given Delirium's mass (held, Skyrim's put back on release)
-			std::vector<std::array<float, 2>>   material; // Skyrim's own friction and bounce of each weighed body (put back on release)
 			NmWorld*                           world{};
 			RE::NiPoint3                       origin;  // game units; physics works in metres from here
 			RE::NiPoint3                       colCenter;  // game units: where the collision patch was gathered around
@@ -212,7 +174,10 @@ namespace delirium
 			float                              scale{ 1.0f };  // the NPC's skeleton scale
 			bool                               logged{};
 			// Skyrim's side: upright we move the actor under the pelvis; fallen, Skyrim's own ragdoll state carries it
-			bool                               knockQueued{}, calibrated{}, wasBalancing{};
+			bool                               knockQueued{}, wasBalancing{};
+			// she is down in Skyrim's ragdoll state and its bodies are her body: they lead, Delirium follows with torques
+			// after F7's lead-in. Not the same as sky.linked (we know how the bodies sit on Delirium's parts).
+			bool                               ragdolled{};
 			bool                               takeover{};  // started from Skyrim's own ragdoll (not F7)
 			bool                               death{};     // a corpse: dies in Delirium, then fades over to Skyrim's ragdoll
 			bool                               writhe{}, writhing{}, relaxed{};  // the dying plan: writhe first or not, gone limp
@@ -223,11 +188,10 @@ namespace delirium
 			int                                lastType{ -1 }, lastElement{ -1 };  // her last blow's type and element ([Reactions] die rows)
 			float                              dieAmp{ -1.0f }, diePeriod{ -1.0f };  // her death writhe's size and s per cycle (-1: random)
 			float                              speedCap{ -1.0f }; // m/s: the next drive caps every Skyrim body at this (her death's spikes), once
-			float                              calibAge{};    // age when Skyrim's ragdoll was calibrated
+			float                              ragdollAge{};  // age when Skyrim's ragdoll took her (ragdolled)
 			bool                               following{};   // torque drive: Delirium in FOLLOW mode on Skyrim's ragdoll
 			bool                               haveDrv{};
 			std::array<float, 21 * 6>          drv{};         // Delirium's force and torque per part from its last step (world)
-			std::array<int, 21>                partBody{};    // the body (index in bodies) each part's drive goes to
 			std::array<float, 21 * 3>          acc{};         // Delirium's joint accelerations from its last step (world)
 			std::array<float, 21 * 3>          ext{};         // its torques on the parts themselves (a shot's spin, electrocute's jolts; world, N m)
 			float                              maxDw{}, maxWant{};
@@ -238,8 +202,7 @@ namespace delirium
 			int                                sleepMax{}; // trace: most frames a body has been counted still by Havok (deactivation) this second
 			int                                clamped{}, spinCapped{}, wantPart{};
 			float                              wantAge{};     // age of the strongest joint ask since the last log line
-			RE::hkbRagdollDriver*              driver{};
-			std::vector<BodyLink>              bodies;
+			SkyrimBody                         sky;  // Skyrim's own ragdoll of her (body/skyrim_body.h)
 			float                              settled{}, noRagdoll{};  // seconds lying still in Skyrim's ragdoll state
 			float                              deadFor{};     // seconds since she died in Delirium (a corpse is let go after kCorpseHold)
 			float                              keLast{ -1.0f };  // her energy at the last once-a-second check
