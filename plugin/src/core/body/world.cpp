@@ -133,6 +133,17 @@ namespace delirium::world
 		return out;
 	}
 
+	Capsule Standing(RE::Actor* a_actor)
+	{
+		constexpr float kRadius = 0.25f;  // metres: a torso
+		const float     s = RE::bhkWorld::GetWorldScale();
+		const auto      feet = a_actor->GetPosition() * s;
+		const float     tall = std::max(a_actor->GetHeight() * s, 2.0f * kRadius);
+		RE::NiPoint3    vel;
+		a_actor->GetLinearVelocity(vel);
+		return { feet + RE::NiPoint3(0.0f, 0.0f, kRadius), feet + RE::NiPoint3(0.0f, 0.0f, tall - kRadius), kRadius, vel * s };
+	}
+
 	bool Add(RE::Actor* a_actor, bool a_log)
 	{
 		auto* world = CellWorld(a_actor);

@@ -21,6 +21,8 @@ namespace delirium::world
 		RE::NiPoint3 vel;  // m/s
 	};
 	[[nodiscard]] std::vector<Capsule> Capsules(RE::Actor* a_actor);
+	// an actor on their feet whose ragdoll is in no world (the player): the upright volume they stand in, as one capsule
+	[[nodiscard]] Capsule Standing(RE::Actor* a_actor);
 
 	// main thread: her ragdoll bodies into her cell's Havok world while she stands (Skyrim keeps them on her
 	// animation, keyframed); false: nothing added

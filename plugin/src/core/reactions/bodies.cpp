@@ -73,6 +73,9 @@ namespace delirium
 		// lock_ (their graphs' locks)
 		std::vector<float> caps;
 		if (a_upright && bodies_) {
+			const auto put = [&](const world::Capsule& c, float a_body) {
+				caps.insert(caps.end(), { c.a.x, c.a.y, c.a.z, c.b.x, c.b.y, c.b.z, c.radius, c.vel.x, c.vel.y, c.vel.z, a_body });
+			};
 			for (const auto& h : world::Added()) {
 				const auto t = h.get();
 				if (!t || t.get() == a_actor || !t->Get3D(false) || t->IsDisabled() || t->GetPosition().GetDistance(a_actor->GetPosition()) > kNear) {
@@ -80,7 +83,19 @@ namespace delirium
 				}
 				const float body = t->IsDead() || t->IsInRagdollState() ? 0.0f : 1.0f;
 				for (const auto& c : world::Capsules(t.get())) {
-					caps.insert(caps.end(), { c.a.x, c.a.y, c.a.z, c.b.x, c.b.y, c.b.z, c.radius, c.vel.x, c.vel.y, c.vel.z, body });
+					put(c, body);
+				}
+			}
+			// the player: Skyrim moves them and nothing of hers can, so solid. Their ragdoll when it is in the world
+			// (knocked down), else the volume they stand in
+			if (auto* pc = RE::PlayerCharacter::GetSingleton();
+				pc && pc->Get3D(false) && !pc->IsOnMount() && pc->GetPosition().GetDistance(a_actor->GetPosition()) <= kNear) {
+				const auto ragdoll = world::Capsules(pc);
+				for (const auto& c : ragdoll) {
+					put(c, 0.0f);
+				}
+				if (ragdoll.empty()) {
+					put(world::Standing(pc), 0.0f);
 				}
 			}
 		}
